@@ -6,7 +6,7 @@ requires-python = ">=3.11"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["shared", "services", "."]
+pythonpath = ["shared", "services/ingestion-agent", "services/compliance-agent", "."]
 addopts = "-ra"
 
 [tool.ruff]
