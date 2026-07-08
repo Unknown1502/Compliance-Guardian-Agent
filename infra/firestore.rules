@@ -1,0 +1,55 @@
+rules_version = '2';
+
+// ComplianceGuardian Firestore security rules.
+//
+// Tenant isolation is enforced here for the dashboard's direct real-time reads:
+// a signed-in user may read ONLY documents whose tenant_id matches their custom
+// claim. All WRITES are denied to clients — every write goes through the backend
+// services, which use the Admin SDK / service-account credentials and bypass
+// these rules. This means a compromised browser token can never mutate state and
+// can never read another tenant's data.
+//
+// Applied in deployed environments (firebase deploy --only firestore:rules or via
+// Terraform google_firebaserules_release). Local emulators run with open rules.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+    function tenant() {
+      return request.auth.token.tenant_id;
+    }
+
+    match /tenants/{tenantId} {
+      allow read: if signedIn() && tenantId == tenant();
+      allow write: if false;
+    }
+
+    match /documents/{documentId} {
+      allow read: if signedIn() && resource.data.tenant_id == tenant();
+      allow write: if false;
+    }
+
+    match /compliance_checks/{checkId} {
+      allow read: if signedIn() && resource.data.tenant_id == tenant();
+      allow write: if false;
+    }
+
+    match /tasks/{taskId} {
+      allow read: if signedIn() && resource.data.tenant_id == tenant();
+      allow write: if false;
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if signedIn() && resource.data.tenant_id == tenant();
+      allow write: if false;
+    }
+
+    // Default deny.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

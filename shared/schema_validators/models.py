@@ -167,6 +167,36 @@ class ReportRow(StrictModel):
 
 
 # ---------------------------------------------------------------------------
+# Firestore: tasks (orchestrator lifecycle; backs GET /api/tasks/:id)
+# ---------------------------------------------------------------------------
+
+
+class TaskType(str, Enum):
+    INGEST = "ingest"
+    CHECK = "check"
+    REPORT = "report"
+
+
+class TaskStatus(str, Enum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class Task(StrictModel):
+    task_id: str = Field(min_length=1)
+    tenant_id: str = Field(min_length=1)
+    task_type: TaskType
+    target_ref: str = Field(min_length=1, description="document_id or report period key")
+    status: TaskStatus = TaskStatus.QUEUED
+    result: dict[str, Any] = Field(default_factory=dict)
+    error: str | None = None
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+# ---------------------------------------------------------------------------
 # Rulesets (versioned YAML under /rulesets/{industry}/{jurisdiction}.yaml)
 # ---------------------------------------------------------------------------
 

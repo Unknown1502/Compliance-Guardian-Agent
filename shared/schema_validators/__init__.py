@@ -31,6 +31,9 @@ from schema_validators.models import (
     RuleSet,
     RuleVerdict,
     RuleVerdictStatus,
+    Task,
+    TaskStatus,
+    TaskType,
     Tenant,
 )
 from schema_validators.rulesets import load_ruleset, load_ruleset_file
@@ -47,6 +50,9 @@ __all__ = [
     "RuleSet",
     "RuleVerdict",
     "RuleVerdictStatus",
+    "Task",
+    "TaskStatus",
+    "TaskType",
     "Tenant",
     "load_ruleset",
     "load_ruleset_file",
