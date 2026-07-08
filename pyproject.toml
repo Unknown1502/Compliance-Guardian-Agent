@@ -12,6 +12,7 @@ pythonpath = [
     "services/compliance-agent",
     "services/escalation-service",
     "services/orchestrator",
+    "services/reporting-agent",
     "apps/api-gateway",
     ".",
 ]

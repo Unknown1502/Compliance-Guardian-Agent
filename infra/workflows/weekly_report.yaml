@@ -1,0 +1,70 @@
+# Cloud Workflows — scheduled compliance report generation.
+#
+# Deployed to Cloud Workflows and triggered by Cloud Scheduler (weekly, Monday
+# 07:00 UTC). For each active tenant it calls the Reporting Agent's
+# POST /internal/report endpoint via the API Gateway.
+#
+# Deploy (once Terraform apply has run):
+#   gcloud workflows deploy cg-weekly-report \
+#     --location=us-central1 \
+#     --source=infra/workflows/weekly_report.yaml \
+#     --service-account=<runtime-sa>@<project>.iam.gserviceaccount.com
+#
+# Variables injected at deploy time (or via argument overrides):
+#   ${api_gateway_url}    — Cloud Run URL of the API Gateway
+#   ${internal_token}     — INTERNAL_TASK_TOKEN value from Secret Manager
+#   The tenant list is currently hardcoded as an argument; in production it
+#   would be fetched from a Firestore tenants query step.
+
+main:
+  params: [args]
+  steps:
+    - init:
+        assign:
+          - api_url: ${default(map.get(args, "api_gateway_url"), sys.get_env("GOOGLE_CLOUD_WORKFLOW_EXECUTION_ID"))}
+          - period_end: ${text.substring(time.format(sys.now()), 0, 10)}
+          - period_start_ts: ${sys.now() - 60 * 60 * 24 * 7}
+          - period_start: ${text.substring(time.format(period_start_ts), 0, 10)}
+          - tenants: ${default(map.get(args, "tenants"), ["tenant-sunrise-care", "tenant-coastal-fresh"])}
+          - token: ${default(map.get(args, "internal_token"), "")}
+          - results: []
+
+    - generate_reports:
+        for:
+          value: tenant_id
+          in: ${tenants}
+          steps:
+            - call_reporting_agent:
+                try:
+                  call: http.post
+                  args:
+                    url: ${api_url + "/internal/report"}
+                    auth:
+                      type: OIDC
+                    headers:
+                      Content-Type: application/json
+                      X-Internal-Token: ${token}
+                    body:
+                      tenant_id: ${tenant_id}
+                      period_start: ${period_start + "T00:00:00Z"}
+                      period_end: ${period_end + "T00:00:00Z"}
+                      generated_by: cloud-workflows-weekly
+                  result: report_response
+                except:
+                  as: e
+                  steps:
+                    - log_error:
+                        call: sys.log
+                        args:
+                          text: ${"report generation failed for " + tenant_id + ": " + json.encode_to_string(e)}
+                          severity: ERROR
+                    - skip_tenant:
+                        assign:
+                          - report_response: {body: {report_id: "error", tenant_id: tenant_id}}
+
+            - collect_result:
+                assign:
+                  - results: ${list.concat(results, report_response.body)}
+
+    - return_results:
+        return: ${results}

@@ -28,3 +28,13 @@ output "gemini_secret_id" {
   description = "Secret Manager secret holding the Gemini API key (version added out-of-band)"
   value       = google_secret_manager_secret.gemini_api_key.secret_id
 }
+
+output "api_gateway_url" {
+  description = "Public Cloud Run URL for the API Gateway"
+  value       = google_cloud_run_v2_service.api_gateway.uri
+}
+
+output "weekly_report_workflow" {
+  description = "Cloud Workflows workflow name for the scheduled report"
+  value       = google_workflows_workflow.weekly_report.name
+}

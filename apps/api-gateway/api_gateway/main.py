@@ -27,6 +27,7 @@ from auth_middleware import AuthContext, require_auth, require_role
 from escalation_service.decisions import apply_decision
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from gcp_clients import audit_dataset, audit_table, project_id
 from gcp_clients.firestore_repo import (
     DecisionConflictError,
@@ -123,6 +124,28 @@ class CheckResponse(BaseModel):
 
 class DecisionRequest(BaseModel):
     action: str = Field(pattern="^(approve|reject)$")
+
+
+class CreateReportRequest(BaseModel):
+    period_start: datetime
+    period_end: datetime
+
+
+class ReportResponse(BaseModel):
+    report_id: str
+    tenant_id: str
+    period_start: str
+    period_end: str
+    content_ref: str
+    total_checks: int
+    pass_count: int
+    fail_count: int
+    escalated_count: int
+    executive_summary: str
+    prompt_version: str
+    model_name: str
+    model_version: str | None
+    used_fixture: bool
 
 
 # ---------------------------------------------------------------------------
@@ -346,25 +369,75 @@ def get_audit_logs(
 
 
 # ---------------------------------------------------------------------------
-# Reports (Phase 4 — reporting agent). Endpoints declared per the API contract;
-# they return 501 until Phase 4 lands, rather than pretending to work.
+# Reports — Reporting Agent (real Gemini or fixture when no key)
 # ---------------------------------------------------------------------------
 
 
-@app.post("/api/reports")
-def create_report(auth: AuthContext = Depends(require_auth)) -> dict:
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Reporting agent is implemented in Phase 4",
+@app.post("/api/reports", response_model=ReportResponse)
+def create_report(
+    req: CreateReportRequest, auth: AuthContext = Depends(require_auth)
+) -> ReportResponse:
+    from reporting_agent.reporter import generate_report
+    from gcp_clients import audit_dataset, audit_table, bigquery_client, firestore_client, project_id as pid, reports_table, storage_client as sc
+    from gemini_client import GeminiClient, GeminiConfigError
+
+    if req.period_start >= req.period_end:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="period_start must be before period_end",
+        )
+    g = gw()
+    try:
+        gemini = g.gemini()
+    except GeminiConfigError:
+        gemini = None
+
+    outcome = generate_report(
+        tenant_id=auth.tenant_id,
+        period_start=req.period_start,
+        period_end=req.period_end,
+        db=g.db,
+        bq_client=g.bq,
+        storage_client=g.storage,
+        auditor=g.auditor,
+        gemini=gemini,
+        bq_dataset=audit_dataset(),
+        bq_reports_table=reports_table(),
+        bq_project=project_id(),
+        generated_by=auth.uid,
+    )
+    s = outcome.stats
+    return ReportResponse(
+        report_id=outcome.report_id,
+        tenant_id=outcome.tenant_id,
+        period_start=outcome.period_start.isoformat(),
+        period_end=outcome.period_end.isoformat(),
+        content_ref=outcome.content_ref,
+        total_checks=s.get("total_checks", 0),
+        pass_count=s.get("auto_approved", 0),
+        fail_count=s.get("rejected", 0),
+        escalated_count=s.get("escalated", 0),
+        executive_summary=outcome.gemini_executive_summary,
+        prompt_version=outcome.prompt_version,
+        model_name=outcome.model_name,
+        model_version=outcome.model_version,
+        used_fixture=outcome.used_fixture,
     )
 
 
-@app.get("/api/reports/{report_id}")
-def get_report(report_id: str, auth: AuthContext = Depends(require_auth)) -> dict:
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Reporting agent is implemented in Phase 4",
-    )
+@app.get("/api/reports/{report_id}", response_class=HTMLResponse)
+def get_report(
+    report_id: str, auth: AuthContext = Depends(require_auth)
+) -> HTMLResponse:
+    from gcp_clients import reports_bucket
+
+    g = gw()
+    blob_path = f"{auth.tenant_id}/{report_id}/report.html"
+    bucket = g.storage.bucket(reports_bucket())
+    blob = bucket.blob(blob_path)
+    if not blob.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="report not found")
+    return HTMLResponse(content=blob.download_as_text())
 
 
 # ---------------------------------------------------------------------------

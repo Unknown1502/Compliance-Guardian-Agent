@@ -143,7 +143,8 @@ class TestAuthAndRbac:
         r = c.patch("/api/compliance/checks/check-a", json={"action": "reject"}, headers=hdr2)
         assert r.status_code == 409
 
-    def test_reports_endpoint_501(self, client):
+    def test_reports_endpoint_requires_auth(self, client):
+        """POST /api/reports is now live (Phase 4) and must require auth."""
         c, _ = client
-        r = c.post("/api/reports", headers={"Authorization": f"Bearer {_dev_token('u1','tenant-a','owner')}"})
-        assert r.status_code == 501
+        r = c.post("/api/reports", json={"period_start": "2026-06-01T00:00:00Z", "period_end": "2026-07-01T00:00:00Z"})
+        assert r.status_code == 401
