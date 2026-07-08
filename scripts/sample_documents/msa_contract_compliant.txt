@@ -1,0 +1,38 @@
+MASTER SERVICES AGREEMENT
+
+This Master Services Agreement ("Agreement") is entered into as of 1 March 2026
+("Effective Date") by and between:
+
+  Party A: Brightpath Analytics Pty Ltd (ACN 623 887 441), of Level 4,
+           22 Foveaux Street, Surry Hills NSW 2010 ("Provider")
+  Party B: Coastal Fresh Distributors Pty Ltd (ACN 611 240 903), of
+           8 Wharf Road, Port Macquarie NSW 2444 ("Client")
+
+1. SERVICES. Provider will supply data analytics and reporting services as
+   described in each executed Statement of Work.
+
+2. TERM AND TERMINATION. This Agreement commences on the Effective Date and
+   continues for an initial term of 12 months. Either party may terminate this
+   Agreement for convenience on sixty (60) days written notice. Either party
+   may terminate immediately for material breach not cured within 14 days of
+   written notice. This Agreement auto-renews for successive 12-month terms
+   unless either party gives written notice of non-renewal at least 45 days
+   before the end of the then-current term.
+
+3. FEES. Client will pay the fees set out in each Statement of Work within 30
+   days of a valid tax invoice.
+
+4. LIABILITY. Each party's total aggregate liability under this Agreement is
+   capped at the total fees paid by Client in the twelve (12) months preceding
+   the event giving rise to the claim. Neither party is liable for indirect or
+   consequential loss.
+
+5. GOVERNING LAW. This Agreement is governed by the laws of New South Wales,
+   Australia, and the parties submit to the exclusive jurisdiction of the
+   courts of New South Wales.
+
+SIGNED for and on behalf of Brightpath Analytics Pty Ltd:
+  Signature: A. Reyes, Director        Signature Date: 2026-02-27
+
+SIGNED for and on behalf of Coastal Fresh Distributors Pty Ltd:
+  Signature: L. Nguyen, Director       Signature Date: 2026-02-28

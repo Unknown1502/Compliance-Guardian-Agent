@@ -1,0 +1,37 @@
+# Local emulators for Phase 1 seed runs and integration tests.
+# Java and the Firebase CLI are not installed on this machine, so emulators
+# run in Docker instead:
+#   - Firestore: official gcloud SDK emulator image
+#   - BigQuery:  ghcr.io/goccy/bigquery-emulator (community, streaming-insert capable)
+#   - GCS:       fsouza/fake-gcs-server
+#
+# Start:  docker compose -f docker-compose.emulators.yml up -d
+# Stop:   docker compose -f docker-compose.emulators.yml down
+
+services:
+  firestore:
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
+    command: >
+      gcloud emulators firestore start
+      --host-port=0.0.0.0:8085
+      --project=cg-local
+    ports:
+      - "8085:8085"
+
+  bigquery:
+    image: ghcr.io/goccy/bigquery-emulator:0.6.6
+    command: >
+      --project=cg-local
+      --dataset=compliance_audit
+    ports:
+      - "9050:9050"
+
+  gcs:
+    image: fsouza/fake-gcs-server:1.52.2
+    command: >
+      -scheme http
+      -host 0.0.0.0
+      -port 4443
+      -public-host localhost:4443
+    ports:
+      - "4443:4443"

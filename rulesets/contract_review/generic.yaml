@@ -1,0 +1,55 @@
+# ComplianceGuardian ruleset — Generic commercial contract review
+# Jurisdiction "generic": baseline checks applicable before any
+# jurisdiction-specific overlay.
+rule_set_version: "1.0.0"
+industry: "contract_review"
+jurisdiction: "generic"
+required_fields:
+  - party_a
+  - party_b
+  - effective_date
+  - termination_clause
+  - governing_law
+  - liability_cap
+rules:
+  - id: "parties_identified"
+    description: "Both contracting parties must be explicitly identified with legal names"
+    check_type: "field_presence"
+    severity: "critical"
+    params:
+      fields: ["party_a", "party_b"]
+  - id: "termination_clause_present"
+    description: "Contract must contain an explicit termination clause"
+    check_type: "field_presence"
+    severity: "high"
+    params:
+      field: "termination_clause"
+  - id: "governing_law_specified"
+    description: "Contract must specify governing law / jurisdiction for disputes"
+    check_type: "field_presence"
+    severity: "high"
+    params:
+      field: "governing_law"
+  - id: "liability_cap_defined"
+    description: "Liability must be capped at a defined amount; uncapped liability is a severe exposure for an SMB"
+    check_type: "field_presence"
+    severity: "high"
+    params:
+      field: "liability_cap"
+  - id: "auto_renewal_notice_period"
+    description: "If the contract auto-renews, the cancellation notice window must be at least 30 days"
+    check_type: "value_range"
+    severity: "medium"
+    params:
+      field: "auto_renewal_notice_days"
+      minimum: 30
+      applies_when_present: true
+  - id: "effective_date_not_backdated"
+    description: "Effective date should not precede the signature date by more than 30 days"
+    check_type: "date_comparison"
+    severity: "medium"
+    params:
+      field: "signature_date"
+      relative_to: "effective_date"
+      maximum_days_before: 30
+      applies_when_present: true

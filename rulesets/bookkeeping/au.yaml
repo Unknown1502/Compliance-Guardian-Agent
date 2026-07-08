@@ -1,0 +1,50 @@
+# ComplianceGuardian ruleset — Bookkeeping / supplier invoices (Australia)
+# Third seeded ruleset: covers the invoice-upload demo path for AU SMBs.
+rule_set_version: "1.0.0"
+industry: "bookkeeping"
+jurisdiction: "au"
+required_fields:
+  - supplier_name
+  - supplier_abn
+  - invoice_number
+  - invoice_date
+  - total_amount
+  - gst_amount
+rules:
+  - id: "abn_present_and_valid_format"
+    description: "Supplier ABN must be present and match the 11-digit ABN format (GST credits cannot be claimed without it)"
+    check_type: "pattern_match"
+    severity: "critical"
+    params:
+      field: "supplier_abn"
+      pattern: "^\\d{2}\\s?\\d{3}\\s?\\d{3}\\s?\\d{3}$"
+  - id: "tax_invoice_threshold"
+    description: "Invoices of $82.50 (inc. GST) or more must be a valid tax invoice to claim GST credits"
+    check_type: "value_range"
+    severity: "high"
+    params:
+      field: "total_amount"
+      threshold: 82.50
+      requires_fields_at_or_above: ["supplier_abn", "gst_amount", "invoice_date"]
+  - id: "gst_ten_percent_consistency"
+    description: "GST amount should be one-eleventh of the GST-inclusive total (10% GST), within rounding tolerance"
+    check_type: "cross_field"
+    severity: "medium"
+    params:
+      total_field: "total_amount"
+      gst_field: "gst_amount"
+      tolerance: 0.05
+  - id: "invoice_date_present"
+    description: "Invoice date must be present for correct BAS period allocation"
+    check_type: "field_presence"
+    severity: "high"
+    params:
+      field: "invoice_date"
+  - id: "invoice_not_future_dated"
+    description: "Invoice date must not be in the future"
+    check_type: "date_comparison"
+    severity: "medium"
+    params:
+      field: "invoice_date"
+      relative_to: "today"
+      must_not_be_after: true

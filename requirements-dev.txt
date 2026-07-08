@@ -1,0 +1,11 @@
+# Phase 1 development dependencies (services add their own in later phases).
+# Pinned to major versions; exact locks happen in CI via pip freeze.
+pydantic>=2.7,<3
+PyYAML>=6.0,<7
+google-cloud-firestore>=2.16,<3
+google-cloud-bigquery>=3.25,<4
+google-cloud-storage>=2.16,<3
+firebase-admin>=6.5,<7
+fastapi>=0.111,<1
+httpx>=0.27,<1
+pytest>=8.2,<9

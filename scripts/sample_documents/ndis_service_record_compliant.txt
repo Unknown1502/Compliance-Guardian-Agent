@@ -1,0 +1,31 @@
+NDIS SERVICE DELIVERY RECORD
+Provider: Sunrise Community Care Pty Ltd
+NDIS Provider Registration Number: 40512345
+
+CLIENT DETAILS
+Client Name: Margaret Chen
+NDIS Participant Number: 430211887
+Service Date: 2026-05-14
+
+SERVICE DETAILS
+Support Category: Assistance with Daily Living
+Support Item: 01_011_0107_1_1
+Hours Delivered: 3.5
+Support Worker: David Okafor
+Worker Screening Clearance: NDIS-WSC-88231-VIC (valid to 2028-11-02)
+
+CONSENT
+Consent Record: Signed consent form CF-2024-1187 on file, executed 2024-02-01,
+covering service delivery data processing and outcome reporting to the NDIA.
+
+RECORD KEEPING
+Record Retention Date: 2033-05-14
+Records stored in accordance with NDIS Practice Standards.
+
+INCIDENT REPORTING
+Incident Identified Date: N/A
+Incident Report Date: N/A
+No reportable incidents during this service period.
+
+Signed: J. Whitford (Service Manager)
+Date: 2026-05-14

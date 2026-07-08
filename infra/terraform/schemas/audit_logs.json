@@ -1,0 +1,44 @@
+[
+  {
+    "name": "event_id",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Deterministic UUIDv5 over (tenant_id, actor, action, dedup_key); doubles as streaming insertId for replay dedup"
+  },
+  {
+    "name": "tenant_id",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Owning tenant; always sourced from verified JWT claims, never client input"
+  },
+  {
+    "name": "actor",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "agent_name (e.g. ingestion-agent) or reviewer_id for human actions"
+  },
+  {
+    "name": "action",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Machine-readable action, e.g. document.ingested, check.escalated, check.approved"
+  },
+  {
+    "name": "before_state",
+    "type": "JSON",
+    "mode": "NULLABLE",
+    "description": "Entity state before the action (null for creations)"
+  },
+  {
+    "name": "after_state",
+    "type": "JSON",
+    "mode": "NULLABLE",
+    "description": "Entity state after the action (null for deletions/failures)"
+  },
+  {
+    "name": "created_at",
+    "type": "TIMESTAMP",
+    "mode": "REQUIRED",
+    "description": "Event time (UTC); partition column"
+  }
+]

@@ -1,0 +1,49 @@
+# ComplianceGuardian ruleset — Healthcare / NDIS providers (Australia)
+# Spec-mandated example ruleset. Version bumps require a new semver and a
+# seed re-run; compliance_checks store rule_set_version for reproducibility.
+rule_set_version: "1.0.0"
+industry: "healthcare_ndis"
+jurisdiction: "AU"
+required_fields:
+  - client_name
+  - service_date
+  - consent_record
+  - record_retention_date
+  - provider_registration_number
+rules:
+  - id: "data_retention_period"
+    description: "Client records must be retained for minimum 7 years"
+    check_type: "date_comparison"
+    severity: "high"
+    params:
+      field: "record_retention_date"
+      relative_to: "service_date"
+      minimum_years: 7
+  - id: "consent_documentation"
+    description: "Explicit consent record required before data processing"
+    check_type: "field_presence"
+    severity: "critical"
+    params:
+      field: "consent_record"
+  - id: "provider_registration_current"
+    description: "NDIS provider registration number must be present and match NDIS format (4-digit prefix, 8+ digits total)"
+    check_type: "pattern_match"
+    severity: "critical"
+    params:
+      field: "provider_registration_number"
+      pattern: "^4\\d{7,}$"
+  - id: "incident_reporting_window"
+    description: "Reportable incidents must be lodged with the NDIS Commission within 24 hours of identification"
+    check_type: "date_comparison"
+    severity: "critical"
+    params:
+      field: "incident_report_date"
+      relative_to: "incident_identified_date"
+      maximum_hours: 24
+      applies_when_present: true
+  - id: "worker_screening_check"
+    description: "All workers delivering NDIS supports must hold a valid NDIS Worker Screening Check"
+    check_type: "field_presence"
+    severity: "high"
+    params:
+      field: "worker_screening_clearance"

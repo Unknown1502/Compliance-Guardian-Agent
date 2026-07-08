@@ -1,0 +1,28 @@
+NDIS SERVICE DELIVERY RECORD
+Provider: Harbour Support Services
+NDIS Provider Registration Number: 7788
+
+CLIENT DETAILS
+Client Name: Tom Rialto
+Service Date: 2026-06-20
+
+SERVICE DETAILS
+Support Category: Community Participation
+Hours Delivered: 2.0
+Support Worker: (name not recorded)
+
+CONSENT
+No signed consent form located for this participant. Verbal consent noted by
+coordinator on 2026-06-19, written record to follow.
+
+RECORD KEEPING
+Record Retention Date: 2029-06-20
+
+INCIDENT REPORTING
+Incident Identified Date: 2026-06-20 09:15
+Incident Report Date: 2026-06-23 16:40
+Notes: Participant fall during transfer; first aid administered. Report lodged
+after coordinator returned from leave.
+
+Signed: R. Amies
+Date: 2026-06-23

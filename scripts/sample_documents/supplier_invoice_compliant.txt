@@ -1,0 +1,24 @@
+TAX INVOICE
+
+Supplier: Redgum Office Supplies Pty Ltd
+ABN: 51 824 753 556
+Address: 14 Miller Street, North Sydney NSW 2060
+
+Invoice Number: INV-20488
+Invoice Date: 2026-06-30
+
+Bill To:
+  Coastal Fresh Distributors Pty Ltd
+  8 Wharf Road, Port Macquarie NSW 2444
+
+DESCRIPTION                              QTY    UNIT      AMOUNT
+A4 Copy Paper 80gsm (box of 5 reams)      12   $24.50    $294.00
+Whiteboard markers (assorted, pack 10)     4    $18.20     $72.80
+Archive boxes with lids (pack of 20)       2    $61.00    $122.00
+
+                                        Subtotal (ex GST):  $488.80
+                                        GST (10%):           $48.88
+                                        TOTAL (inc GST):    $537.68
+
+Payment terms: 14 days from invoice date
+EFT: BSB 082-401 Acct 55291083

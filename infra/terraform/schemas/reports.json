@@ -1,0 +1,44 @@
+[
+  {
+    "name": "report_id",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "UUID of the generated report"
+  },
+  {
+    "name": "tenant_id",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Owning tenant"
+  },
+  {
+    "name": "period_start",
+    "type": "TIMESTAMP",
+    "mode": "REQUIRED",
+    "description": "Inclusive start of the reporting period (UTC)"
+  },
+  {
+    "name": "period_end",
+    "type": "TIMESTAMP",
+    "mode": "REQUIRED",
+    "description": "Exclusive end of the reporting period (UTC)"
+  },
+  {
+    "name": "generated_by",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "reporting-agent version tag or requesting user id"
+  },
+  {
+    "name": "content_ref",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "gs:// path to the rendered HTML/PDF report artifact"
+  },
+  {
+    "name": "created_at",
+    "type": "TIMESTAMP",
+    "mode": "REQUIRED",
+    "description": "Generation time (UTC); partition column"
+  }
+]
