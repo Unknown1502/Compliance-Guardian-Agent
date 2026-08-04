@@ -52,6 +52,12 @@ resource "google_cloud_run_v2_service" "api_gateway" {
         value = var.enable_api_docs ? "1" : "0"
       }
       env {
+        # Firebase Hosting default domain + localhost for local dev. Add a
+        # custom domain here too if one is ever mapped in Firebase Hosting.
+        name  = "CG_CORS_ORIGINS"
+        value = "https://${var.project_id}.web.app,http://localhost:5173"
+      }
+      env {
         name = "GEMINI_API_KEY"
         value_source {
           secret_key_ref {
