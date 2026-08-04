@@ -34,9 +34,9 @@ variable "risk_escalation_threshold" {
 }
 
 variable "gemini_model" {
-  description = "Gemini model name used by all agents (recorded with every call for reproducibility)"
+  description = "Gemini model name used by all agents (recorded with every call for reproducibility). gemini-2.5-flash is no longer available to new API keys (returns 404) — using the cheapest current Flash-Lite tier model instead."
   type        = string
-  default     = "gemini-2.5-flash"
+  default     = "gemini-3.1-flash-lite"
 }
 
 variable "enable_auth_dev_mode" {
