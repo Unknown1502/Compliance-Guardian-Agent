@@ -223,3 +223,13 @@ resource "google_project_iam_member" "gateway_job_user" {
   role    = "roles/bigquery.jobUser"
   member  = "serviceAccount:${google_service_account.cg_gateway.email}"
 }
+
+# Firebase Authentication Admin — required for POST /api/signup to call
+# firebase_admin.auth.create_user()/set_custom_user_claims() when creating a
+# new tenant's owner account. Verifying existing tokens (every other
+# endpoint) needs no special role; only *creating* users does.
+resource "google_project_iam_member" "gateway_firebase_auth_admin" {
+  project = var.project_id
+  role    = "roles/firebaseauth.admin"
+  member  = "serviceAccount:${google_service_account.cg_gateway.email}"
+}

@@ -1,0 +1,40 @@
+# Builds and pushes all 5 service images from repo root context.
+#
+# Why this exists: `terraform apply` only changes Cloud Run *config* (env
+# vars, IAM, resource shape) — it never rebuilds the container image. Every
+# code change needs an explicit rebuild+push (this file) followed by an
+# explicit `gcloud run deploy --image=...` (or re-running the per-service
+# deploy) to actually reach production. Terraform applying cleanly is not
+# evidence that new code is live.
+#
+# Usage (from repo root):
+#   gcloud builds submit --config infra/cloudbuild.yaml --project cg-guardian-9856 .
+#
+# Then redeploy whichever services changed, e.g.:
+#   gcloud run deploy cg-api-gateway \
+#     --image us-central1-docker.pkg.dev/cg-guardian-9856/cg-services/api-gateway:latest \
+#     --region us-central1 --project cg-guardian-9856
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: [build, -f, apps/api-gateway/Dockerfile, -t, us-central1-docker.pkg.dev/cg-guardian-9856/cg-services/api-gateway:latest, .]
+  - name: gcr.io/cloud-builders/docker
+    args: [build, -f, services/compliance-agent/Dockerfile, -t, us-central1-docker.pkg.dev/cg-guardian-9856/cg-services/compliance-agent:latest, .]
+  - name: gcr.io/cloud-builders/docker
+    args: [build, -f, services/ingestion-agent/Dockerfile, -t, us-central1-docker.pkg.dev/cg-guardian-9856/cg-services/ingestion-agent:latest, .]
+  - name: gcr.io/cloud-builders/docker
+    args: [build, -f, services/escalation-service/Dockerfile, -t, us-central1-docker.pkg.dev/cg-guardian-9856/cg-services/escalation-service:latest, .]
+  - name: gcr.io/cloud-builders/docker
+    args: [build, -f, services/reporting-agent/Dockerfile, -t, us-central1-docker.pkg.dev/cg-guardian-9856/cg-services/reporting-agent:latest, .]
+
+images:
+  - us-central1-docker.pkg.dev/cg-guardian-9856/cg-services/api-gateway:latest
+  - us-central1-docker.pkg.dev/cg-guardian-9856/cg-services/compliance-agent:latest
+  - us-central1-docker.pkg.dev/cg-guardian-9856/cg-services/ingestion-agent:latest
+  - us-central1-docker.pkg.dev/cg-guardian-9856/cg-services/escalation-service:latest
+  - us-central1-docker.pkg.dev/cg-guardian-9856/cg-services/reporting-agent:latest
+
+options:
+  machineType: E2_HIGHCPU_8
+
+timeout: 1200s
