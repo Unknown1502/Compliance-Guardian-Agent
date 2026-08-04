@@ -24,6 +24,22 @@ resource "google_service_account" "cg_reader" {
   display_name = "ComplianceGuardian reader (audit SELECT, no writes)"
 }
 
+# Gateway SA: the API Gateway is the one identity that legitimately needs both
+# audit-log writes (upload events) AND SELECT queries (/api/audit-logs,
+# /api/reports) in the same process. Deliberately kept separate from
+# cg_runtime so the ingestion/compliance/escalation agents — which only ever
+# stream-append and never construct queries — retain the strict no-DML
+# guarantee. This SA is the one documented exception to that guarantee: it
+# holds both the appender and reader custom roles, so unlike cg_runtime it
+# is NOT provably incapable of DML at the IAM level. Scope stays as small as
+# the gateway's actual code path (see api_gateway/main.py get_audit_logs and
+# create_report, which is the same code that would otherwise need a
+# reporting-agent HTTP proxy to preserve the split).
+resource "google_service_account" "cg_gateway" {
+  account_id   = "cg-gateway"
+  display_name = "ComplianceGuardian API Gateway (audit append + SELECT)"
+}
+
 # Custom role: streaming insert ONLY. No jobs.create → no DML possible.
 resource "google_project_iam_custom_role" "audit_appender" {
   role_id     = "cgAuditAppender"
@@ -128,4 +144,82 @@ resource "google_secret_manager_secret_iam_member" "reader_reads_gemini_key" {
   secret_id = google_secret_manager_secret.gemini_api_key.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.cg_reader.email}"
+}
+
+# bigquery.jobs.create is a project-scoped permission — a dataset-level IAM
+# binding (as used for cgAuditReader above) cannot grant it; BigQuery silently
+# ignores it there since jobs aren't dataset-scoped resources. Query execution
+# needs this predefined role bound at the project level. The dataset-level
+# cgAuditReader binding above still does the real least-privilege work (get/
+# getData scoped to the audit dataset only) — this just unblocks starting the
+# query job itself.
+resource "google_project_iam_member" "reader_job_user" {
+  project = var.project_id
+  role    = "roles/bigquery.jobUser"
+  member  = "serviceAccount:${google_service_account.cg_reader.email}"
+}
+
+# ---------------------------------------------------------------------------
+# Gateway SA bindings — mirrors cg_runtime's write access (Firestore, raw docs,
+# Gemini secret) plus cg_reader's query access (BigQuery jobs.create), plus
+# report-bucket writes (report HTML) and the ability to enqueue Cloud Tasks
+# that invoke ingestion/compliance as cg_runtime.
+# ---------------------------------------------------------------------------
+
+resource "google_bigquery_dataset_iam_member" "gateway_appender" {
+  dataset_id = google_bigquery_dataset.audit.dataset_id
+  role       = google_project_iam_custom_role.audit_appender.id
+  member     = "serviceAccount:${google_service_account.cg_gateway.email}"
+}
+
+resource "google_bigquery_dataset_iam_member" "gateway_reader" {
+  dataset_id = google_bigquery_dataset.audit.dataset_id
+  role       = google_project_iam_custom_role.audit_reader.id
+  member     = "serviceAccount:${google_service_account.cg_gateway.email}"
+}
+
+resource "google_project_iam_member" "gateway_firestore" {
+  project = var.project_id
+  role    = "roles/datastore.user"
+  member  = "serviceAccount:${google_service_account.cg_gateway.email}"
+}
+
+resource "google_storage_bucket_iam_member" "gateway_raw_docs" {
+  bucket = google_storage_bucket.raw_docs.name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.cg_gateway.email}"
+}
+
+resource "google_storage_bucket_iam_member" "gateway_reports_bucket" {
+  bucket = google_storage_bucket.reports.name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.cg_gateway.email}"
+}
+
+resource "google_project_iam_member" "gateway_tasks_enqueuer" {
+  project = var.project_id
+  role    = "roles/cloudtasks.enqueuer"
+  member  = "serviceAccount:${google_service_account.cg_gateway.email}"
+}
+
+# Lets the gateway enqueue Cloud Tasks whose OIDC token impersonates
+# cg_runtime (INVOKER_SA), which is what's actually authorized to invoke the
+# internal ingestion/compliance Cloud Run services.
+resource "google_service_account_iam_member" "gateway_acts_as_runtime" {
+  service_account_id = google_service_account.cg_runtime.name
+  role                = "roles/iam.serviceAccountUser"
+  member              = "serviceAccount:${google_service_account.cg_gateway.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "gateway_reads_gemini_key" {
+  secret_id = google_secret_manager_secret.gemini_api_key.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.cg_gateway.email}"
+}
+
+# See reader_job_user above — jobs.create must be project-scoped.
+resource "google_project_iam_member" "gateway_job_user" {
+  project = var.project_id
+  role    = "roles/bigquery.jobUser"
+  member  = "serviceAccount:${google_service_account.cg_gateway.email}"
 }

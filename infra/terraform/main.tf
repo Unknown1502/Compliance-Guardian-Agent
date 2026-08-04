@@ -76,6 +76,24 @@ resource "google_firestore_index" "checks_by_tenant_decision_created" {
   }
 }
 
+# Ascending created_at pairing — needed by reporting_agent's period aggregation
+# query (tenant_id ==, created_at >= start, created_at < end with no explicit
+# order_by). Firestore requires an exact index match per query shape; the
+# DESCENDING variant above doesn't satisfy this range-filter query.
+resource "google_firestore_index" "checks_by_tenant_created_asc" {
+  collection = "compliance_checks"
+  database   = google_firestore_database.default.name
+
+  fields {
+    field_path = "tenant_id"
+    order      = "ASCENDING"
+  }
+  fields {
+    field_path = "created_at"
+    order      = "ASCENDING"
+  }
+}
+
 # ---------------------------------------------------------------------------
 # BigQuery — append-only audit_logs + reports
 # ---------------------------------------------------------------------------

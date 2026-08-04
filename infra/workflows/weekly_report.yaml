@@ -56,7 +56,7 @@ main:
                     - log_error:
                         call: sys.log
                         args:
-                          text: ${"report generation failed for " + tenant_id + ": " + json.encode_to_string(e)}
+                          text: '${"report generation failed for " + tenant_id + ": " + json.encode_to_string(e)}'
                           severity: ERROR
                     - skip_tenant:
                         assign:

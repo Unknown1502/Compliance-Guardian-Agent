@@ -15,15 +15,18 @@ export function useTenantCollection<T>(
   collectionName: string,
   tenantId: string | undefined,
   extraConstraints: QueryConstraint[] = [],
-): { data: T[]; error: string | null } {
+): { data: T[]; error: string | null; loading: boolean } {
   const [data, setData] = useState<T[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!tenantId) {
       setData([]);
+      setLoading(false);
       return;
     }
+    setLoading(true);
     const q = query(
       collection(firestore(), collectionName),
       where("tenant_id", "==", tenantId),
@@ -34,12 +37,16 @@ export function useTenantCollection<T>(
       (snap) => {
         setData(snap.docs.map((d) => d.data() as T));
         setError(null);
+        setLoading(false);
       },
-      (err) => setError(err.message),
+      (err) => {
+        setError(err.message);
+        setLoading(false);
+      },
     );
     return () => unsub();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collectionName, tenantId]);
 
-  return { data, error };
+  return { data, error, loading };
 }
