@@ -38,6 +38,25 @@ export class ApiError extends Error {
   }
 }
 
+export async function signup(
+  email: string,
+  password: string,
+  businessName: string,
+): Promise<{ tenant_id: string; uid: string; email: string }> {
+  const res = await fetch(`${API_BASE_URL}/api/signup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      email,
+      password,
+      business_name: businessName,
+      industry: "healthcare_ndis",
+      jurisdiction: "AU",
+    }),
+  });
+  return jsonOrThrow(res);
+}
+
 export async function uploadDocument(
   session: Session,
   file: File,

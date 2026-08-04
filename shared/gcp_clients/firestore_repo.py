@@ -45,6 +45,11 @@ class FirestoreRepo:
             raise NotFoundError(f"tenant {tenant_id} not found")
         return Tenant.model_validate(snap.to_dict())
 
+    def upsert_tenant(self, tenant: Tenant) -> None:
+        self._db.collection(COLLECTION_TENANTS).document(tenant.tenant_id).set(
+            tenant.model_dump(mode="json")
+        )
+
     # -- documents ----------------------------------------------------------
 
     def get_document(self, document_id: str, tenant_id: str) -> Document:

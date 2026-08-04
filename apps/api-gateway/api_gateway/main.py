@@ -23,11 +23,12 @@ import os
 import uuid
 from datetime import datetime, timezone
 
-from auth_middleware import AuthContext, require_auth, require_role
+from auth_middleware import AuthContext, create_tenant_owner, require_auth, require_role
 from escalation_service.decisions import apply_decision
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
+from firebase_admin.auth import EmailAlreadyExistsError
 from gcp_clients import audit_dataset, audit_table, project_id
 from gcp_clients.firestore_repo import (
     DecisionConflictError,
@@ -36,9 +37,17 @@ from gcp_clients.firestore_repo import (
 )
 from google.cloud import bigquery
 from pydantic import BaseModel, Field
-from schema_validators import Document, DocumentStatus, TaskType
+from schema_validators import (
+    Document,
+    DocumentStatus,
+    PlanTier,
+    RulesetNotFoundError,
+    TaskType,
+    Tenant,
+    load_ruleset,
+)
 
-from api_gateway.composition import Gateway
+from api_gateway.composition import RULESETS_ROOT, Gateway
 from api_gateway.rate_limit import TokenBucketRateLimiter
 
 logging.basicConfig(level=logging.INFO)
@@ -76,6 +85,10 @@ app.add_middleware(
 
 _gateway: Gateway | None = None
 _upload_limiter = TokenBucketRateLimiter(capacity=20, refill_per_second=0.5)
+# Signup is public and creates real Firebase Auth users + tenants — keep it
+# tight (5 attempts, refilling 1 every 2 min) since there's no tenant_id yet
+# to key on; keyed by client IP instead.
+_signup_limiter = TokenBucketRateLimiter(capacity=5, refill_per_second=1 / 120)
 
 
 def gw() -> Gateway:
@@ -88,6 +101,20 @@ def gw() -> Gateway:
 # ---------------------------------------------------------------------------
 # Schemas
 # ---------------------------------------------------------------------------
+
+
+class SignupRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=6, max_length=4096)
+    business_name: str = Field(min_length=1, max_length=200)
+    industry: str = Field(default="healthcare_ndis")
+    jurisdiction: str = Field(default="AU")
+
+
+class SignupResponse(BaseModel):
+    tenant_id: str
+    uid: str
+    email: str
 
 
 class UploadResponse(BaseModel):
@@ -166,6 +193,66 @@ class ReportResponse(BaseModel):
 @app.get("/healthz")
 def healthz() -> dict:
     return {"status": "ok", "service": "api-gateway"}
+
+
+# ---------------------------------------------------------------------------
+# Signup — the only public (unauthenticated) write endpoint. Everything else
+# requires a bearer token because it acts on an existing tenant; this one
+# creates the tenant.
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/signup", response_model=SignupResponse, status_code=status.HTTP_201_CREATED)
+def signup(req: SignupRequest, request: Request) -> SignupResponse:
+    client_ip = request.client.host if request.client else "unknown"
+    if not _signup_limiter.allow(client_ip):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="too many signup attempts; try again shortly",
+        )
+    # Fail before creating any account/tenant state if we don't have a
+    # ruleset for this industry/jurisdiction — there'd be nothing to check
+    # documents against.
+    try:
+        load_ruleset(RULESETS_ROOT, req.industry, req.jurisdiction)
+    except (RulesetNotFoundError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"no ruleset for industry={req.industry!r} jurisdiction={req.jurisdiction!r}",
+        ) from exc
+
+    tenant_id = f"tenant-{uuid.uuid4().hex[:12]}"
+    try:
+        uid = create_tenant_owner(email=req.email, password=req.password, tenant_id=tenant_id)
+    except EmailAlreadyExistsError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="email already registered"
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    g = gw()
+    tenant = Tenant(
+        tenant_id=tenant_id,
+        name=req.business_name,
+        industry=req.industry,
+        jurisdiction=req.jurisdiction,
+        plan_tier=PlanTier.FREE,
+    )
+    g.repo.upsert_tenant(tenant)
+    g.auditor.log(
+        tenant_id=tenant_id,
+        actor=uid,
+        action="tenant.signed_up",
+        dedup_key=f"{tenant_id}:signed_up",
+        before_state=None,
+        after_state={
+            "name": req.business_name,
+            "industry": req.industry,
+            "jurisdiction": req.jurisdiction,
+        },
+    )
+    return SignupResponse(tenant_id=tenant_id, uid=uid, email=req.email)
 
 
 # ---------------------------------------------------------------------------

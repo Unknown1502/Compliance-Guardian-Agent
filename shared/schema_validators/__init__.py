@@ -26,6 +26,7 @@ from schema_validators.models import (
     Document,
     DocumentStatus,
     GeminiCallMetadata,
+    PlanTier,
     ReportRow,
     Rule,
     RuleSet,
@@ -36,7 +37,7 @@ from schema_validators.models import (
     TaskType,
     Tenant,
 )
-from schema_validators.rulesets import load_ruleset, load_ruleset_file
+from schema_validators.rulesets import RulesetNotFoundError, load_ruleset, load_ruleset_file
 
 __all__ = [
     "AuditLogRow",
@@ -45,6 +46,7 @@ __all__ = [
     "Document",
     "DocumentStatus",
     "GeminiCallMetadata",
+    "PlanTier",
     "ReportRow",
     "Rule",
     "RuleSet",
@@ -54,6 +56,7 @@ __all__ = [
     "TaskStatus",
     "TaskType",
     "Tenant",
+    "RulesetNotFoundError",
     "load_ruleset",
     "load_ruleset_file",
 ]

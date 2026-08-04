@@ -68,6 +68,20 @@ def _ensure_firebase_app() -> firebase_admin.App:
             return firebase_admin.initialize_app()
 
 
+def create_tenant_owner(*, email: str, password: str, tenant_id: str) -> str:
+    """Create a brand-new Firebase Auth user as the 'owner' of a brand-new tenant.
+
+    Sets the tenant_id/role custom claims immediately, so the very first ID
+    token the client mints after sign-in already carries them — no separate
+    claims-propagation step needed. Raises firebase_admin.auth.EmailAlreadyExistsError
+    if the email is taken; callers map that to HTTP 409.
+    """
+    _ensure_firebase_app()
+    user = fb_auth.create_user(email=email, password=password)
+    fb_auth.set_custom_user_claims(user.uid, {"tenant_id": tenant_id, "role": "owner"})
+    return user.uid
+
+
 @dataclass(frozen=True)
 class AuthContext:
     """Verified identity passed to route handlers. tenant_id is trusted."""

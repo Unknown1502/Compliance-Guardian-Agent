@@ -13,6 +13,7 @@ import { useAuth } from "../auth/AuthContext";
 import type { Role } from "../types";
 import { Button } from "./ui/Button";
 import { cn } from "../lib/cn";
+import { ApiError, signup as signupRequest } from "../api/client";
 
 const DEMO_TENANTS = [
   { id: "tenant-sunrise-care", label: "Sunrise Community Care (NDIS)" },
@@ -35,8 +36,10 @@ export function Login() {
   const { devSignIn, firebaseSignIn } = useAuth();
   const [tenantId, setTenantId] = useState(DEMO_TENANTS[0].id);
   const [role, setRole] = useState<Role>("owner");
+  const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [businessName, setBusinessName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -51,9 +54,20 @@ export function Login() {
     setError(null);
     setBusy(true);
     try {
+      if (mode === "signup") {
+        await signupRequest(email, password, businessName);
+      }
       await firebaseSignIn(email, password);
     } catch (err) {
-      setError((err as Error).message);
+      setError(
+        err instanceof ApiError
+          ? err.status === 409
+            ? "An account with that email already exists — try signing in instead."
+            : err.status === 429
+              ? "Too many attempts — please wait a minute and try again."
+              : err.message
+          : (err as Error).message,
+      );
       setBusy(false);
     }
   };
@@ -207,12 +221,28 @@ export function Login() {
             <form onSubmit={handleFirebase} className="space-y-5">
               <div>
                 <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-100">
-                  Welcome back
+                  {mode === "signin" ? "Welcome back" : "Create your account"}
                 </h2>
                 <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                  Sign in with your organization credentials.
+                  {mode === "signin"
+                    ? "Sign in with your organization credentials."
+                    : "Set up your NDIS compliance workspace in under a minute."}
                 </p>
               </div>
+              {mode === "signup" && (
+                <label className="block">
+                  <span className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                    Business name
+                  </span>
+                  <input
+                    type="text"
+                    placeholder="Sunrise Community Care Pty Ltd"
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm shadow-sm focus:border-brand-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    value={businessName}
+                    onChange={(e) => setBusinessName(e.target.value)}
+                  />
+                </label>
+              )}
               <label className="block">
                 <span className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">
                   Email
@@ -238,8 +268,20 @@ export function Login() {
                 />
               </label>
               <Button type="submit" loading={busy} size="lg" className="w-full">
-                Sign in
+                {mode === "signin" ? "Sign in" : "Create account"}
               </Button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMode(mode === "signin" ? "signup" : "signin");
+                  setError(null);
+                }}
+                className="w-full text-center text-sm text-brand-600 hover:underline dark:text-brand-400"
+              >
+                {mode === "signin"
+                  ? "New here? Create an account"
+                  : "Already have an account? Sign in"}
+              </button>
             </form>
           )}
 

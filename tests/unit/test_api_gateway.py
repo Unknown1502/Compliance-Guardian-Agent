@@ -23,6 +23,7 @@ def _dev_token(uid: str, tenant_id: str, role: str) -> str:
 
 class FakeRepo:
     def __init__(self):
+        self.tenants = {}
         self.docs = {
             "doc-a": Document(
                 document_id="doc-a", tenant_id="tenant-a", source="upload",
@@ -68,6 +69,9 @@ class FakeRepo:
         updated = c.model_copy(update={"decision": decision, "reviewer_id": reviewer_id})
         self.checks[check_id] = updated
         return updated
+
+    def upsert_tenant(self, tenant) -> None:
+        self.tenants[tenant.tenant_id] = tenant
 
 
 class FakeAuditor:
@@ -148,3 +152,63 @@ class TestAuthAndRbac:
         c, _ = client
         r = c.post("/api/reports", json={"period_start": "2026-06-01T00:00:00Z", "period_end": "2026-07-01T00:00:00Z"})
         assert r.status_code == 401
+
+
+class TestSignup:
+    """POST /api/signup — the only public write endpoint (it creates the tenant)."""
+
+    def _payload(self, **overrides):
+        payload = {
+            "email": "owner@sunrisecare.example",
+            "password": "correct-horse-battery-staple",
+            "business_name": "Sunrise Community Care Pty Ltd",
+            "industry": "healthcare_ndis",
+            "jurisdiction": "AU",
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_signup_creates_tenant_and_owner(self, client, monkeypatch):
+        c, fake = client
+        import api_gateway.main as main
+
+        monkeypatch.setattr(main, "create_tenant_owner", lambda **kw: "uid-new-owner")
+
+        r = c.post("/api/signup", json=self._payload())
+        assert r.status_code == 201
+        body = r.json()
+        assert body["uid"] == "uid-new-owner"
+        assert body["tenant_id"].startswith("tenant-")
+        assert body["tenant_id"] in fake.repo.tenants
+        assert fake.repo.tenants[body["tenant_id"]].name == "Sunrise Community Care Pty Ltd"
+        assert any(e["action"] == "tenant.signed_up" for e in fake.auditor.events)
+
+    def test_signup_no_auth_required(self, client, monkeypatch):
+        c, _ = client
+        import api_gateway.main as main
+
+        monkeypatch.setattr(main, "create_tenant_owner", lambda **kw: "uid-x")
+        r = c.post("/api/signup", json=self._payload())  # no Authorization header
+        assert r.status_code == 201
+
+    def test_signup_rejects_unknown_ruleset(self, client):
+        c, _ = client
+        r = c.post("/api/signup", json=self._payload(industry="astrology", jurisdiction="ZZ"))
+        assert r.status_code == 400
+
+    def test_signup_duplicate_email_is_409(self, client, monkeypatch):
+        c, _ = client
+        import api_gateway.main as main
+        from firebase_admin.auth import EmailAlreadyExistsError
+
+        def _raise(**kw):
+            raise EmailAlreadyExistsError("email already exists", None, None)
+
+        monkeypatch.setattr(main, "create_tenant_owner", _raise)
+        r = c.post("/api/signup", json=self._payload())
+        assert r.status_code == 409
+
+    def test_signup_short_password_rejected(self, client):
+        c, _ = client
+        r = c.post("/api/signup", json=self._payload(password="short"))
+        assert r.status_code == 422  # pydantic min_length validation
