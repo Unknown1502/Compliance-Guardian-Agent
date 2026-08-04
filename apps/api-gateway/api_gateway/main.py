@@ -55,7 +55,17 @@ ALLOWED_UPLOAD_TYPES = {
 }
 CORS_ORIGINS = os.environ.get("CG_CORS_ORIGINS", "http://localhost:5173").split(",")
 
-app = FastAPI(title="ComplianceGuardian API Gateway", version="0.1.0")
+# Swagger/OpenAPI is off unless explicitly enabled — this is a compliance
+# product; the API surface should not be publicly browsable by default.
+_DOCS_ENABLED = os.environ.get("CG_ENABLE_DOCS") == "1"
+
+app = FastAPI(
+    title="ComplianceGuardian API Gateway",
+    version="0.1.0",
+    docs_url="/docs" if _DOCS_ENABLED else None,
+    redoc_url="/redoc" if _DOCS_ENABLED else None,
+    openapi_url="/openapi.json" if _DOCS_ENABLED else None,
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,

@@ -38,3 +38,21 @@ variable "gemini_model" {
   type        = string
   default     = "gemini-2.5-flash"
 }
+
+variable "enable_auth_dev_mode" {
+  description = <<-EOT
+    DANGER — leave false in any environment real users or judges can reach.
+    When true, the API gateway accepts forged 'dev:<base64-claims>' bearer
+    tokens instead of verifying real Firebase Auth JWTs. Only ever set true
+    for a fully local/offline dev environment. Flip to false the moment
+    Firebase Auth is enabled on this project.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "enable_api_docs" {
+  description = "Expose Swagger UI (/docs, /redoc, /openapi.json) on the public API gateway. Keep false in production — the API surface should not be publicly browsable."
+  type        = bool
+  default     = false
+}

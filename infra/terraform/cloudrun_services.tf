@@ -41,12 +41,15 @@ resource "google_cloud_run_v2_service" "api_gateway" {
         name  = "INVOKER_SA"
         value = google_service_account.cg_runtime.email
       }
-      # TEMPORARY: dev-mode auth bypass, enabled until Firebase Auth is set up
-      # on this project (blocked on one-time Firebase ToS acceptance in the
-      # console — see README). Remove once VITE_AUTH_MODE=firebase is live.
+      # DANGER: dev-mode auth bypass. Controlled by var.enable_auth_dev_mode —
+      # see variables.tf. Must be false once Firebase Auth is live.
       env {
         name  = "CG_AUTH_DEV_MODE"
-        value = "1"
+        value = var.enable_auth_dev_mode ? "1" : "0"
+      }
+      env {
+        name  = "CG_ENABLE_DOCS"
+        value = var.enable_api_docs ? "1" : "0"
       }
       env {
         name = "GEMINI_API_KEY"

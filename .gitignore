@@ -13,6 +13,7 @@ build/
 # Node (dashboard)
 node_modules/
 apps/dashboard/dist/
+apps/dashboard/.firebase/
 
 # Env & secrets — never commit
 .env
