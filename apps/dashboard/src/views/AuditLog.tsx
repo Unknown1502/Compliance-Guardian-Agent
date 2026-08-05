@@ -4,7 +4,7 @@ import { Search, ScrollText, RefreshCw } from "lucide-react";
 import { getAuditLogs } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import type { AuditEvent } from "../types";
-import { Card } from "../components/ui/Card";
+import { Card, PageHeading } from "../components/ui/Card";
 import { TableSkeleton } from "../components/ui/Skeleton";
 import { EmptyState } from "../components/ui/EmptyState";
 
@@ -39,24 +39,21 @@ export function AuditLog() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-bold tracking-tight text-slate-800 dark:text-slate-100">
-            Audit log
-          </h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
-            Immutable, append-only record of every decision (BigQuery).
-          </p>
-        </div>
-        <button
-          onClick={load}
-          disabled={loading}
-          className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 disabled:opacity-50 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-        >
-          <RefreshCw size={13} className={loading ? "animate-spin" : ""} />
-          Refresh
-        </button>
-      </div>
+      <PageHeading
+        kind="Provenance"
+        title="Audit log"
+        subtitle="Immutable, append-only record of every decision."
+        action={
+          <button
+            onClick={load}
+            disabled={loading}
+            className="inline-flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-[0.06em] text-slate-500 transition-colors hover:text-brand-700 disabled:opacity-50 dark:text-slate-400 dark:hover:text-brand-300"
+          >
+            <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
+            Refresh
+          </button>
+        }
+      />
 
       <div className="relative max-w-sm">
         <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />

@@ -1,6 +1,5 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ShieldCheck } from "lucide-react";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { ThemeProvider } from "./context/ThemeContext";
 import { ToastProvider } from "./context/ToastContext";
@@ -21,14 +20,19 @@ function SplashScreen() {
         transition={{ duration: 0.4 }}
         className="flex flex-col items-center gap-3"
       >
+        <div className="flex items-baseline gap-[3px]">
+          <span className="font-display text-lg font-semibold leading-none tracking-tight text-slate-900 dark:text-slate-50">
+            Compliance
+          </span>
+          <span className="font-display text-lg font-normal italic leading-none tracking-tight text-brand-700 dark:text-brand-300">
+            Guardian
+          </span>
+        </div>
         <motion.div
-          animate={{ scale: [1, 1.06, 1] }}
-          transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
-          className="grid h-11 w-11 place-items-center rounded-xl bg-gradient-to-br from-brand-500 to-brand-700 text-white shadow-glow-brand"
-        >
-          <ShieldCheck size={22} />
-        </motion.div>
-        <p className="text-sm text-slate-400 dark:text-slate-500">Loading ComplianceGuardian…</p>
+          animate={{ scaleX: [0, 1] }}
+          transition={{ duration: 1.1, repeat: Infinity, ease: "easeInOut" }}
+          className="h-px w-24 origin-left bg-brand-600 dark:bg-brand-400"
+        />
       </motion.div>
     </div>
   );

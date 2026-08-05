@@ -13,7 +13,7 @@ import {
 import { uploadDocument, triggerCheck, ApiError } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useToast } from "../context/ToastContext";
-import { Card, CardHeader } from "../components/ui/Card";
+import { Card, CardHeader, PageHeading } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { cn } from "../lib/cn";
 
@@ -101,15 +101,11 @@ export function UploadView() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-xl font-bold tracking-tight text-slate-800 dark:text-slate-100">
-          Upload document
-        </h2>
-        <p className="text-sm text-slate-500 dark:text-slate-400">
-          PDF, text, CSV or image. Ingestion extracts fields with Gemini, then a
-          compliance check scores risk against your ruleset.
-        </p>
-      </div>
+      <PageHeading
+        kind="Intake"
+        title="Upload document"
+        subtitle="PDF, text, CSV or image. Fields are extracted, then scored against your ruleset."
+      />
 
       <Card>
         <div

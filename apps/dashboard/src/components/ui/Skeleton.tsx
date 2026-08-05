@@ -3,21 +3,16 @@ import { cn } from "../../lib/cn";
 export function Skeleton({ className }: { className?: string }) {
   return (
     <div
-      className={cn(
-        "relative overflow-hidden rounded-md bg-slate-200/70 dark:bg-slate-800",
-        className,
-      )}
-    >
-      <div className="absolute inset-0 -translate-x-full animate-shimmer bg-shimmer-gradient" />
-    </div>
+      className={cn("animate-pulse bg-slate-200/80 dark:bg-slate-800", className)}
+    />
   );
 }
 
 export function TableSkeleton({ rows = 5, cols = 4 }: { rows?: number; cols?: number }) {
   return (
-    <div className="divide-y divide-slate-100 dark:divide-slate-800">
+    <div className="divide-y divide-slate-200 border-y border-slate-200 dark:divide-slate-800 dark:border-slate-800">
       {Array.from({ length: rows }).map((_, r) => (
-        <div key={r} className="flex items-center gap-4 px-4 py-3.5 sm:px-5">
+        <div key={r} className="flex items-center gap-4 py-3.5">
           {Array.from({ length: cols }).map((_, c) => (
             <Skeleton
               key={c}

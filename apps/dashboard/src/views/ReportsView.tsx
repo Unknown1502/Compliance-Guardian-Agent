@@ -13,7 +13,7 @@ import { useAuth } from "../auth/AuthContext";
 import { useToast } from "../context/ToastContext";
 import { ApiError } from "../api/client";
 import { API_BASE_URL } from "../config";
-import { Card, CardHeader } from "../components/ui/Card";
+import { Card, CardHeader, PageHeading } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { StatCard } from "../components/ui/StatCard";
 import { DecisionBreakdown } from "../components/ui/DecisionBreakdown";
@@ -91,15 +91,11 @@ export function ReportsView() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-xl font-bold tracking-tight text-slate-800 dark:text-slate-100">
-          Reports
-        </h2>
-        <p className="text-sm text-slate-500 dark:text-slate-400">
-          Gemini-generated, audit-ready compliance summaries. Select a date range and
-          generate on demand.
-        </p>
-      </div>
+      <PageHeading
+        kind="Statements"
+        title="Reports"
+        subtitle="Audit-ready compliance summaries. Pick a range and generate on demand."
+      />
 
       <Card>
         <div className="flex flex-wrap items-end gap-4">
@@ -140,7 +136,7 @@ export function ReportsView() {
             className="space-y-4"
           >
             {report.used_fixture && (
-              <div className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
+              <div className="flex items-center gap-2 rounded-xl border border-brass/35 bg-brass/[0.06] px-4 py-2.5 text-sm text-brass dark:bg-brass/10 dark:text-[#D6AD57]">
                 <AlertTriangle size={15} className="shrink-0" />
                 Executive summary generated with a fixture (no GEMINI_API_KEY set). Set
                 the key and regenerate for a real Gemini-authored summary.

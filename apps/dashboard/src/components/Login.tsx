@@ -1,13 +1,4 @@
 import { useState } from "react";
-import { motion } from "framer-motion";
-import {
-  ShieldCheck,
-  Sparkles,
-  FileCheck2,
-  ScanSearch,
-  GaugeCircle,
-  ArrowRight,
-} from "lucide-react";
 import { AUTH_MODE } from "../config";
 import { useAuth } from "../auth/AuthContext";
 import type { Role } from "../types";
@@ -26,11 +17,18 @@ const ROLES: { id: Role; label: string }[] = [
   { id: "admin", label: "Admin" },
 ];
 
-const FEATURES = [
-  { icon: ScanSearch, text: "Gemini extracts structured fields from any document" },
-  { icon: GaugeCircle, text: "Instant risk score with cited, versioned rules" },
-  { icon: FileCheck2, text: "Auto-approve or escalate — fully auditable trail" },
+// A real specimen line from the register — the product's actual output, used
+// as the hero rather than a claim about it.
+const SPECIMEN = [
+  { clause: "consent_documentation", verdict: "fail", note: "No signed consent on file" },
+  { clause: "incident_reporting_window", verdict: "fail", note: "Lodged 3 days after incident" },
+  { clause: "worker_screening_check", verdict: "fail", note: "Clearance not recorded" },
+  { clause: "data_retention_period", verdict: "pass", note: "Retained to 2029-06-20" },
 ];
+
+const FIELD =
+  "w-full border border-slate-300 bg-white px-3 py-2.5 text-[13px] text-slate-900 placeholder:text-slate-400 transition-colors focus:border-brand-600 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:border-brand-400";
+const LABEL = "eyebrow mb-1.5 block";
 
 export function Login() {
   const { devSignIn, firebaseSignIn } = useAuth();
@@ -62,9 +60,9 @@ export function Login() {
       setError(
         err instanceof ApiError
           ? err.status === 409
-            ? "An account with that email already exists — try signing in instead."
+            ? "An account with that email already exists — sign in instead."
             : err.status === 429
-              ? "Too many attempts — please wait a minute and try again."
+              ? "Too many attempts. Wait a minute and try again."
               : err.message
           : (err as Error).message,
       );
@@ -73,95 +71,88 @@ export function Login() {
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-slate-50 px-4 py-10 dark:bg-slate-950">
-      <div className="pointer-events-none absolute inset-0 bg-grid-fade" />
-      <div className="pointer-events-none absolute -top-32 left-1/2 h-96 w-[42rem] -translate-x-1/2 rounded-full bg-brand-400/20 blur-3xl dark:bg-brand-600/10" />
-      <div className="pointer-events-none absolute -left-24 top-1/3 h-72 w-72 animate-blob rounded-full bg-brand-300/25 blur-3xl dark:bg-brand-800/15" />
-      <div
-        className="pointer-events-none absolute -right-16 bottom-0 h-80 w-80 animate-blob rounded-full bg-violet-300/20 blur-3xl dark:bg-violet-800/10"
-        style={{ animationDelay: "4s" }}
-      />
+    <div className="min-h-screen bg-slate-100 dark:bg-slate-950 lg:grid lg:grid-cols-[1.05fr_1fr]">
+      {/* Left: the specimen record. The product's real output is the argument. */}
+      <div className="relative flex flex-col justify-between bg-slate-950 px-8 py-10 sm:px-12 lg:px-14 lg:py-14">
+        <div className="flex items-baseline gap-[3px]">
+          <span className="font-display text-lg font-semibold leading-none tracking-tight text-slate-50">
+            Compliance
+          </span>
+          <span className="font-display text-lg font-normal italic leading-none tracking-tight text-brand-300">
+            Guardian
+          </span>
+        </div>
 
-      <div className="relative grid w-full max-w-4xl overflow-hidden rounded-3xl border border-slate-200/80 bg-white/70 shadow-soft-lg backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/70 lg:grid-cols-5">
-        {/* Brand panel */}
-        <motion.div
-          initial={{ opacity: 0, x: -16 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-          className="relative hidden flex-col justify-between bg-gradient-to-br from-brand-600 via-brand-700 to-slate-900 p-8 text-white lg:col-span-2 lg:flex"
-        >
-          <div>
-            <div className="mb-8 flex items-center gap-2.5">
-              <div className="grid h-9 w-9 place-items-center rounded-lg bg-white/15 backdrop-blur-sm">
-                <ShieldCheck size={18} />
-              </div>
-              <span className="font-semibold tracking-tight">ComplianceGuardian</span>
-            </div>
-            <h1 className="text-2xl font-bold leading-snug">
-              Agentic compliance,
-              <br />
-              audited by default.
-            </h1>
-            <p className="mt-3 text-sm text-white/70">
-              Upload a document. Gemini scores the risk, cites the rules, and routes
-              the decision — every step logged.
-            </p>
-          </div>
+        <div className="my-12 lg:my-0">
+          <p className="eyebrow !text-brand-400">Specimen record · NDIS AU</p>
+          <h1 className="mt-4 max-w-md font-display text-[30px] font-normal leading-[1.18] text-slate-50 sm:text-[36px]">
+            Every finding cites the clause
+            <span className="text-brand-300"> it came from.</span>
+          </h1>
+          <p className="mt-4 max-w-sm text-[13px] leading-relaxed text-slate-400">
+            Upload a service record. Findings are returned against the NDIS
+            ruleset, scored, and written to an append-only register you can hand
+            an auditor.
+          </p>
 
-          <ul className="space-y-3.5">
-            {FEATURES.map((f, i) => (
-              <motion.li
-                key={f.text}
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.25 + i * 0.1, duration: 0.4 }}
-                className="flex items-start gap-2.5 text-sm text-white/85"
+          {/* The specimen table: a real extract, not a marketing graphic. */}
+          <div className="mt-9 max-w-md border-t border-slate-800">
+            {SPECIMEN.map((row) => (
+              <div
+                key={row.clause}
+                className="flex items-baseline justify-between gap-4 border-b border-slate-800/70 py-2.5"
               >
-                <f.icon size={16} className="mt-0.5 shrink-0 text-white/70" />
-                {f.text}
-              </motion.li>
+                <div className="min-w-0">
+                  <p className="font-mono-num truncate text-[11.5px] text-slate-300">
+                    {row.clause}
+                  </p>
+                  <p className="mt-0.5 truncate text-[11px] text-slate-500">{row.note}</p>
+                </div>
+                <span
+                  className={cn(
+                    "shrink-0 border px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.1em]",
+                    row.verdict === "fail"
+                      ? "border-[#C97664]/40 text-[#D98878]"
+                      : "border-brand-400/40 text-brand-300",
+                  )}
+                >
+                  {row.verdict}
+                </span>
+              </div>
             ))}
-          </ul>
-
-          <div className="flex items-center gap-1.5 text-xs text-white/50">
-            <Sparkles size={12} />
-            XPRIZE Build with Gemini Hackathon
-          </div>
-        </motion.div>
-
-        {/* Form panel */}
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.1, ease: [0.16, 1, 0.3, 1] }}
-          className="p-8 lg:col-span-3 sm:p-10"
-        >
-          <div className="mb-7 flex items-center gap-2.5 lg:hidden">
-            <div className="grid h-9 w-9 place-items-center rounded-lg bg-gradient-to-br from-brand-500 to-brand-700 text-white">
-              <ShieldCheck size={18} />
+            <div className="flex items-baseline justify-between pt-3.5">
+              <span className="eyebrow !text-slate-500">Score</span>
+              <span className="font-mono-num text-[13px] font-semibold text-[#D98878]">
+                95 / 100 · Escalated
+              </span>
             </div>
-            <span className="font-semibold tracking-tight text-slate-800 dark:text-slate-100">
-              ComplianceGuardian
-            </span>
           </div>
+        </div>
 
+        <p className="eyebrow !text-slate-600">
+          Append-only audit trail · Rule version pinned to every decision
+        </p>
+      </div>
+
+      {/* Right: the form. */}
+      <div className="flex flex-col justify-center px-6 py-12 sm:px-10 lg:px-14">
+        <div className="mx-auto w-full max-w-[340px]">
           {AUTH_MODE === "dev" ? (
-            <div className="space-y-5">
+            <div className="space-y-6">
               <div>
-                <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-100">
+                <p className="eyebrow">Local access</p>
+                <h2 className="mt-2 font-display text-[26px] font-normal leading-tight text-slate-900 dark:text-slate-50">
                   Sign in to explore
                 </h2>
-                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                  Local dev sign-in — pick a tenant and role, no password needed.
+                <p className="mt-2 text-[13px] leading-relaxed text-slate-500 dark:text-slate-400">
+                  Development sign-in. Pick a tenant and role — no password.
                 </p>
               </div>
 
               <label className="block">
-                <span className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                  Tenant
-                </span>
+                <span className={LABEL}>Tenant</span>
                 <select
-                  className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-800 shadow-sm transition-colors focus:border-brand-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  className={FIELD}
                   value={tenantId}
                   onChange={(e) => setTenantId(e.target.value)}
                 >
@@ -174,127 +165,118 @@ export function Login() {
               </label>
 
               <div>
-                <span className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                  Role
-                </span>
-                <div className="relative grid grid-cols-3 gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
-                  {ROLES.map((r) => (
+                <span className={LABEL}>Role</span>
+                <div className="grid grid-cols-3 border border-slate-300 dark:border-slate-700">
+                  {ROLES.map((r, i) => (
                     <button
                       key={r.id}
                       type="button"
                       onClick={() => setRole(r.id)}
-                      className="relative z-10 rounded-lg px-3 py-2 text-sm font-medium transition-colors"
-                    >
-                      <span
-                        className={cn(
-                          "relative z-10",
-                          role === r.id
-                            ? "text-brand-700 dark:text-brand-300"
-                            : "text-slate-500 dark:text-slate-400",
-                        )}
-                      >
-                        {r.label}
-                      </span>
-                      {role === r.id && (
-                        <motion.span
-                          layoutId="role-pill"
-                          transition={{ type: "spring", stiffness: 450, damping: 32 }}
-                          className="absolute inset-0 rounded-lg bg-white shadow-soft dark:bg-slate-700"
-                        />
+                      className={cn(
+                        "py-2 text-[12px] font-medium transition-colors",
+                        i > 0 && "border-l border-slate-300 dark:border-slate-700",
+                        role === r.id
+                          ? "bg-brand-600 text-white"
+                          : "text-slate-500 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-900",
                       )}
+                    >
+                      {r.label}
                     </button>
                   ))}
                 </div>
               </div>
 
-              <Button
-                onClick={handleDev}
-                loading={busy}
-                size="lg"
-                className="w-full"
-                icon={!busy ? <ArrowRight size={15} /> : undefined}
-              >
+              <Button onClick={handleDev} loading={busy} size="lg" className="w-full">
                 Enter dashboard
               </Button>
             </div>
           ) : (
             <form onSubmit={handleFirebase} className="space-y-5">
               <div>
-                <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-100">
-                  {mode === "signin" ? "Welcome back" : "Create your account"}
+                <p className="eyebrow">{mode === "signin" ? "Registered access" : "New provider"}</p>
+                <h2 className="mt-2 font-display text-[26px] font-normal leading-tight text-slate-900 dark:text-slate-50">
+                  {mode === "signin" ? "Sign in" : "Open your register"}
                 </h2>
-                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                <p className="mt-2 text-[13px] leading-relaxed text-slate-500 dark:text-slate-400">
                   {mode === "signin"
-                    ? "Sign in with your organization credentials."
+                    ? "Use your organisation credentials."
                     : "Set up your NDIS compliance workspace in under a minute."}
                 </p>
               </div>
+
               {mode === "signup" && (
                 <label className="block">
-                  <span className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                    Business name
-                  </span>
+                  <span className={LABEL}>Business name</span>
                   <input
                     type="text"
                     placeholder="Sunrise Community Care Pty Ltd"
-                    className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm shadow-sm focus:border-brand-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    className={FIELD}
                     value={businessName}
                     onChange={(e) => setBusinessName(e.target.value)}
                   />
                 </label>
               )}
               <label className="block">
-                <span className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                  Email
-                </span>
+                <span className={LABEL}>Email</span>
                 <input
                   type="email"
-                  placeholder="you@company.com"
-                  className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm shadow-sm focus:border-brand-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  placeholder="you@provider.com.au"
+                  className={FIELD}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                 />
               </label>
               <label className="block">
-                <span className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                  Password
-                </span>
+                <span className={LABEL}>Password</span>
                 <input
                   type="password"
                   placeholder="••••••••"
-                  className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm shadow-sm focus:border-brand-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  className={FIELD}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                 />
               </label>
+
               <Button type="submit" loading={busy} size="lg" className="w-full">
                 {mode === "signin" ? "Sign in" : "Create account"}
               </Button>
+
               <button
                 type="button"
                 onClick={() => {
                   setMode(mode === "signin" ? "signup" : "signin");
                   setError(null);
                 }}
-                className="w-full text-center text-sm text-brand-600 hover:underline dark:text-brand-400"
+                className="w-full text-center text-[12.5px] text-slate-500 underline decoration-slate-300 underline-offset-[3px] transition-colors hover:text-brand-700 dark:text-slate-400 dark:decoration-slate-700 dark:hover:text-brand-300"
               >
                 {mode === "signin"
-                  ? "New here? Create an account"
-                  : "Already have an account? Sign in"}
+                  ? "New here? Open a register"
+                  : "Already registered? Sign in"}
               </button>
             </form>
           )}
 
           {error && (
-            <motion.p
-              initial={{ opacity: 0, y: -4 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="mt-4 text-sm text-status-critical"
-            >
+            <p className="mt-5 border-l-2 border-oxide pl-3 text-[12.5px] leading-relaxed text-oxide dark:text-[#D98878]">
               {error}
-            </motion.p>
+            </p>
           )}
-        </motion.div>
+
+          {/* Anchors the column and states the offer — the reason a provider
+              arriving from outreach would sign up at all. */}
+          <dl className="mt-10 border-t border-slate-300 pt-5 dark:border-slate-800">
+            {[
+              ["First audit", "Free — no card required"],
+              ["Turnaround", "Minutes, not weeks"],
+              ["Ruleset", "NDIS Practice Standards (AU)"],
+            ].map(([term, detail]) => (
+              <div key={term} className="flex items-baseline justify-between gap-4 py-1.5">
+                <dt className="eyebrow">{term}</dt>
+                <dd className="text-[12px] text-slate-600 dark:text-slate-400">{detail}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
       </div>
     </div>
   );

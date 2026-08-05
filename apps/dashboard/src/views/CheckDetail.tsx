@@ -24,7 +24,7 @@ import type { ComplianceCheck } from "../types";
 const VERDICT_BAR: Record<string, string> = {
   pass: "bg-status-good",
   fail: "bg-status-critical",
-  uncertain: "bg-amber-400",
+  uncertain: "bg-brass",
 };
 
 export function CheckDetail() {

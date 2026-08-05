@@ -1,36 +1,44 @@
 import { useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import {
-  ListChecks,
-  UploadCloud,
-  ScrollText,
-  FileBarChart2,
-  LogOut,
-  Menu,
-  X,
-  ShieldCheck,
-} from "lucide-react";
+import { LogOut, Menu, X } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { ThemeToggle } from "./ui/ThemeToggle";
 import { PageTransition } from "./ui/PageTransition";
 import { cn } from "../lib/cn";
 
+// Nav entries carry a record-type label because each screen genuinely is a
+// different class of record — not decoration, and not a sequence, so no
+// numbering.
 const NAV = [
-  { to: "/", label: "Task queue", end: true, icon: ListChecks },
-  { to: "/upload", label: "Upload", icon: UploadCloud },
-  { to: "/audit", label: "Audit log", icon: ScrollText },
-  { to: "/reports", label: "Reports", icon: FileBarChart2 },
+  { to: "/", label: "Task queue", kind: "Register", end: true },
+  { to: "/upload", label: "Upload", kind: "Intake" },
+  { to: "/audit", label: "Audit log", kind: "Provenance" },
+  { to: "/reports", label: "Reports", kind: "Statements" },
 ];
 
-const ROLE_STYLES: Record<string, string> = {
-  reviewer:
-    "bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:ring-amber-900",
-  admin:
-    "bg-violet-50 text-violet-700 ring-1 ring-inset ring-violet-200 dark:bg-violet-950/40 dark:text-violet-400 dark:ring-violet-900",
-  owner:
-    "bg-brand-50 text-brand-700 ring-1 ring-inset ring-brand-200 dark:bg-brand-950/40 dark:text-brand-400 dark:ring-brand-900",
-};
+function Wordmark({ tone = "light" }: { tone?: "light" | "dark" }) {
+  return (
+    <div className="flex items-baseline gap-[3px]">
+      <span
+        className={cn(
+          "font-display text-[17px] font-semibold leading-none tracking-tight",
+          tone === "dark" ? "text-slate-900 dark:text-slate-50" : "text-slate-50",
+        )}
+      >
+        Compliance
+      </span>
+      <span
+        className={cn(
+          "font-display text-[17px] font-normal italic leading-none tracking-tight",
+          tone === "dark" ? "text-brand-700 dark:text-brand-300" : "text-brand-300",
+        )}
+      >
+        Guardian
+      </span>
+    </div>
+  );
+}
 
 export function Layout() {
   const { session, signOut } = useAuth();
@@ -39,19 +47,16 @@ export function Layout() {
   if (!session) return null;
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
-      <header className="sticky top-0 z-40 border-b border-slate-200/80 bg-white/80 backdrop-blur-md dark:border-slate-800 dark:bg-slate-950/80">
-        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
-          <div className="flex items-center gap-2.5">
-            <div className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-brand-500 to-brand-700 text-white shadow-glow-brand">
-              <ShieldCheck size={17} strokeWidth={2.25} />
-            </div>
-            <span className="font-semibold tracking-tight text-slate-800 dark:text-slate-100">
-              ComplianceGuardian
-            </span>
+    <div className="min-h-screen bg-slate-100 dark:bg-slate-950 lg:flex">
+      {/* The spine: always ink-dark, like the bound edge of a register. */}
+      <aside className="hidden w-[228px] shrink-0 flex-col justify-between bg-slate-950 px-5 py-6 lg:flex">
+        <div>
+          <div className="px-1">
+            <Wordmark />
+            <p className="eyebrow mt-2 !text-slate-500">NDIS · Australia</p>
           </div>
 
-          <nav className="hidden items-center gap-1 md:flex">
+          <nav className="mt-9 flex flex-col">
             {NAV.map((n) => {
               const isActive = n.end
                 ? location.pathname === n.to
@@ -61,71 +66,84 @@ export function Layout() {
                   key={n.to}
                   to={n.to}
                   end={n.end}
-                  className="relative px-3 py-2 text-sm font-medium"
+                  className="group relative border-l border-slate-800 py-2.5 pl-4 pr-1"
                 >
-                  <span
-                    className={cn(
-                      "relative z-10 flex items-center gap-1.5",
-                      isActive
-                        ? "text-brand-700 dark:text-brand-300"
-                        : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200",
-                    )}
-                  >
-                    <n.icon size={14} strokeWidth={2.25} />
-                    {n.label}
-                  </span>
                   {isActive && (
                     <motion.span
-                      layoutId="nav-pill"
-                      transition={{ type: "spring", stiffness: 420, damping: 34 }}
-                      className="absolute inset-0 rounded-lg bg-brand-50 dark:bg-brand-950/50"
+                      layoutId="spine-mark"
+                      transition={{ type: "spring", stiffness: 500, damping: 40 }}
+                      className="absolute -left-px top-0 h-full w-[2px] bg-brand-400"
                     />
                   )}
+                  <span
+                    className={cn(
+                      "block text-[13px] font-medium leading-tight transition-colors",
+                      isActive
+                        ? "text-slate-50"
+                        : "text-slate-500 group-hover:text-slate-300",
+                    )}
+                  >
+                    {n.label}
+                  </span>
+                  <span
+                    className={cn(
+                      "eyebrow mt-0.5 block !text-[9px] transition-colors",
+                      isActive ? "!text-brand-400" : "!text-slate-600",
+                    )}
+                  >
+                    {n.kind}
+                  </span>
                 </NavLink>
               );
             })}
           </nav>
+        </div>
 
-          <div className="flex items-center gap-2.5">
-            <span className="hidden text-sm text-slate-400 dark:text-slate-500 sm:inline">
+        <div className="space-y-3">
+          <div className="border-t border-slate-800 pt-3">
+            <p className="font-mono-num truncate text-[11px] text-slate-500">
               {session.tenantId}
-            </span>
-            <span
-              className={cn(
-                "hidden rounded-full px-2.5 py-0.5 text-xs font-medium capitalize sm:inline-block",
-                ROLE_STYLES[session.role],
-              )}
-            >
-              {session.role}
-            </span>
-            <ThemeToggle />
+            </p>
+            <p className="eyebrow mt-1 !text-brand-400">{session.role}</p>
+          </div>
+          <div className="flex items-center justify-between">
             <button
               onClick={() => signOut()}
-              className="hidden items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200 md:inline-flex"
+              className="inline-flex items-center gap-1.5 text-[12px] text-slate-500 transition-colors hover:text-slate-200"
             >
-              <LogOut size={14} />
+              <LogOut size={13} />
               Sign out
             </button>
+            <ThemeToggle />
+          </div>
+        </div>
+      </aside>
+
+      {/* Mobile bar */}
+      <header className="sticky top-0 z-40 border-b border-slate-300 bg-slate-950 px-4 py-3 dark:border-slate-800 lg:hidden">
+        <div className="flex items-center justify-between">
+          <Wordmark />
+          <div className="flex items-center gap-1">
+            <ThemeToggle />
             <button
               onClick={() => setMobileOpen((o) => !o)}
-              className="grid h-8 w-8 place-items-center rounded-lg text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800 md:hidden"
+              className="grid h-8 w-8 place-items-center text-slate-400 hover:text-slate-100"
               aria-label="Toggle menu"
             >
               {mobileOpen ? <X size={18} /> : <Menu size={18} />}
             </button>
           </div>
         </div>
-
         <AnimatePresence>
           {mobileOpen && (
             <motion.nav
               initial={{ height: 0, opacity: 0 }}
               animate={{ height: "auto", opacity: 1 }}
               exit={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.22 }}
-              className="overflow-hidden border-t border-slate-200 dark:border-slate-800 md:hidden"
+              transition={{ duration: 0.2 }}
+              className="overflow-hidden"
             >
-              <div className="flex flex-col gap-0.5 px-4 py-2">
+              <div className="flex flex-col pt-3">
                 {NAV.map((n) => (
                   <NavLink
                     key={n.to}
@@ -134,22 +152,20 @@ export function Layout() {
                     onClick={() => setMobileOpen(false)}
                     className={({ isActive }) =>
                       cn(
-                        "flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium",
+                        "border-l py-2 pl-3 text-[13px] font-medium",
                         isActive
-                          ? "bg-brand-50 text-brand-700 dark:bg-brand-950/50 dark:text-brand-300"
-                          : "text-slate-500 dark:text-slate-400",
+                          ? "border-brand-400 text-slate-50"
+                          : "border-slate-800 text-slate-500",
                       )
                     }
                   >
-                    <n.icon size={15} />
                     {n.label}
                   </NavLink>
                 ))}
                 <button
                   onClick={() => signOut()}
-                  className="mt-1 flex items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm font-medium text-slate-500 dark:text-slate-400"
+                  className="mt-1 border-l border-slate-800 py-2 pl-3 text-left text-[13px] text-slate-500"
                 >
-                  <LogOut size={15} />
                   Sign out
                 </button>
               </div>
@@ -158,12 +174,14 @@ export function Layout() {
         </AnimatePresence>
       </header>
 
-      <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
-        <AnimatePresence mode="wait">
-          <PageTransition key={location.pathname}>
-            <Outlet />
-          </PageTransition>
-        </AnimatePresence>
+      <main className="stock-ruled min-w-0 flex-1 px-4 py-7 sm:px-8 lg:px-12 lg:py-10">
+        <div className="mx-auto max-w-5xl">
+          <AnimatePresence mode="wait">
+            <PageTransition key={location.pathname}>
+              <Outlet />
+            </PageTransition>
+          </AnimatePresence>
+        </div>
       </main>
     </div>
   );

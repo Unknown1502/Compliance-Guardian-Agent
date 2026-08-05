@@ -5,76 +5,89 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: [
-          "Inter var",
-          "Inter",
-          "ui-sans-serif",
-          "system-ui",
-          "-apple-system",
-          "Segoe UI",
-          "Roboto",
-          "Helvetica",
-          "Arial",
-          "sans-serif",
-        ],
+        // Public Sans is the US Web Design System's civic typeface — a
+        // deliberate choice for a regulatory product, not a neutral default.
+        sans: ["Public Sans", "ui-sans-serif", "system-ui", "Segoe UI", "sans-serif"],
+        display: ["Spectral", "ui-serif", "Georgia", "serif"],
+        mono: ["IBM Plex Mono", "ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
       },
       colors: {
-        brand: {
-          50: "#eef6ff",
-          100: "#d9ebff",
-          200: "#b8dcff",
-          300: "#86c4ff",
-          400: "#4da3fa",
-          500: "#2a78d6",
-          600: "#1d4ed8",
-          700: "#1e40af",
-          800: "#1e3a75",
-          900: "#1c3361",
-          950: "#132047",
+        // Neutral ramp: document stock. A faint green-grey cast, deliberately
+        // not the blue-grey of default slate.
+        slate: {
+          50: "#F7F8F4",
+          100: "#EDEFE9",
+          200: "#DFE2DA",
+          300: "#C9CEC3",
+          400: "#9AA295",
+          500: "#737C6F",
+          600: "#575F55",
+          700: "#414940",
+          800: "#2A302A",
+          900: "#1B201B",
+          950: "#121714",
         },
+        // Seal green — certification/approval, struck-stamp ink.
+        brand: {
+          50: "#EDF4F0",
+          100: "#D6E8DE",
+          200: "#AFD2C0",
+          300: "#7FB49B",
+          400: "#4F9375",
+          500: "#2E765A",
+          600: "#1D5A45",
+          700: "#174A38",
+          800: "#133A2C",
+          900: "#102E24",
+          950: "#0A1D17",
+        },
+        ink: "#14181C",
+        stock: "#EDEFE9",
+        oxide: "#9A3B2B",
+        brass: "#A07A24",
         risk: {
-          low: "#0ca30c",
-          medium: "#fab219",
-          high: "#d03b3b",
+          low: "#1D5A45",
+          medium: "#A07A24",
+          high: "#9A3B2B",
         },
         status: {
-          good: "#0ca30c",
-          warning: "#fab219",
-          serious: "#ec835a",
-          critical: "#d03b3b",
+          good: "#1D5A45",
+          warning: "#A07A24",
+          serious: "#A85A2A",
+          critical: "#9A3B2B",
         },
+      },
+      borderRadius: {
+        // Registers are squared off. Nothing here is a pill.
+        DEFAULT: "2px",
+        sm: "1px",
+        md: "2px",
+        lg: "3px",
+        xl: "4px",
+        "2xl": "5px",
+        "3xl": "6px",
       },
       boxShadow: {
-        soft: "0 1px 2px 0 rgba(15, 23, 42, 0.04), 0 1px 3px 0 rgba(15, 23, 42, 0.06)",
-        "soft-md":
-          "0 2px 4px -1px rgba(15, 23, 42, 0.05), 0 4px 12px -2px rgba(15, 23, 42, 0.08)",
-        "soft-lg":
-          "0 4px 8px -2px rgba(15, 23, 42, 0.06), 0 12px 32px -6px rgba(15, 23, 42, 0.12)",
-        "glow-brand": "0 0 0 1px rgba(29, 78, 216, 0.08), 0 8px 24px -8px rgba(29, 78, 216, 0.35)",
+        soft: "0 1px 0 0 rgba(20, 24, 28, 0.04)",
+        "soft-md": "0 1px 2px 0 rgba(20, 24, 28, 0.06)",
+        "soft-lg": "0 2px 8px -2px rgba(20, 24, 28, 0.10)",
+        "glow-brand": "0 0 0 1px rgba(29, 90, 69, 0.20)",
+        struck: "0 1px 0 0 rgba(20,24,28,0.06), inset 0 0 0 1px rgba(255,255,255,0.5)",
       },
       keyframes: {
-        shimmer: {
-          "0%": { backgroundPosition: "-400px 0" },
-          "100%": { backgroundPosition: "400px 0" },
+        strike: {
+          "0%": { opacity: "0", transform: "scale(1.28) rotate(-9deg)" },
+          "60%": { opacity: "1", transform: "scale(0.97) rotate(-2.4deg)" },
+          "100%": { opacity: "1", transform: "scale(1) rotate(-3deg)" },
         },
-        blob: {
-          "0%, 100%": { transform: "translate(0px, 0px) scale(1)" },
-          "33%": { transform: "translate(30px, -40px) scale(1.08)" },
-          "66%": { transform: "translate(-20px, 20px) scale(0.94)" },
-        },
-        "pulse-ring": {
-          "0%": { boxShadow: "0 0 0 0 rgba(29, 78, 216, 0.35)" },
-          "100%": { boxShadow: "0 0 0 10px rgba(29, 78, 216, 0)" },
+        "rule-draw": {
+          "0%": { transform: "scaleX(0)" },
+          "100%": { transform: "scaleX(1)" },
         },
       },
       animation: {
-        shimmer: "shimmer 1.6s ease-in-out infinite",
-        blob: "blob 12s ease-in-out infinite",
-        "pulse-ring": "pulse-ring 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite",
-      },
-      backgroundImage: {
-        "shimmer-gradient":
-          "linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.55) 50%, rgba(255,255,255,0) 100%)",
+        strike: "strike 420ms cubic-bezier(0.2, 0.9, 0.3, 1) both",
+        "rule-draw": "rule-draw 600ms cubic-bezier(0.16, 1, 0.3, 1) both",
       },
     },
   },

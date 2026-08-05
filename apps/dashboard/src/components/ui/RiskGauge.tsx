@@ -1,55 +1,64 @@
-import { motion } from "framer-motion";
 import { cn } from "../../lib/cn";
 
-// Semi-circular risk gauge. 0-100 score mapped onto a 180° arc with the
-// fixed status palette (good / warning / critical) — always paired with the
-// numeric label at the center, never color alone.
-
-const SIZE = 168;
-const STROKE = 14;
-const RADIUS = (SIZE - STROKE) / 2;
-const CIRCUMFERENCE = Math.PI * RADIUS; // half circle
+// The signature element: a risk score struck onto the record like an audit
+// stamp. Deliberately off-axis — a stamp pressed by hand is never square to
+// the page. The numeral is always paired with a written band, never colour
+// alone.
 
 function toneFor(score: number) {
-  if (score >= 60) return { color: "#d03b3b", label: "High risk", text: "text-status-critical" };
-  if (score >= 30) return { color: "#fab219", label: "Medium risk", text: "text-amber-600 dark:text-amber-400" };
-  return { color: "#0ca30c", label: "Low risk", text: "text-status-good" };
+  if (score >= 60)
+    return {
+      band: "Material breach",
+      ring: "text-oxide dark:text-[#C97664]",
+      figure: "text-oxide dark:text-[#D98878]",
+    };
+  if (score >= 30)
+    return {
+      band: "Qualified",
+      ring: "text-brass dark:text-[#C39A46]",
+      figure: "text-brass dark:text-[#D6AD57]",
+    };
+  return {
+    band: "Compliant",
+    ring: "text-brand-600 dark:text-brand-400",
+    figure: "text-brand-700 dark:text-brand-300",
+  };
 }
 
 export function RiskGauge({ score }: { score: number }) {
   const clamped = Math.max(0, Math.min(100, score));
   const tone = toneFor(clamped);
-  const offset = CIRCUMFERENCE - (clamped / 100) * CIRCUMFERENCE;
-  const cy = SIZE / 2;
 
   return (
-    <div className="flex flex-col items-center">
-      <svg width={SIZE} height={SIZE / 2 + STROKE / 2} viewBox={`0 0 ${SIZE} ${SIZE / 2 + STROKE / 2}`}>
-        <path
-          d={`M ${STROKE / 2} ${cy} A ${RADIUS} ${RADIUS} 0 0 1 ${SIZE - STROKE / 2} ${cy}`}
-          fill="none"
-          className="stroke-slate-100 dark:stroke-slate-800"
-          strokeWidth={STROKE}
-          strokeLinecap="round"
-        />
-        <motion.path
-          d={`M ${STROKE / 2} ${cy} A ${RADIUS} ${RADIUS} 0 0 1 ${SIZE - STROKE / 2} ${cy}`}
-          fill="none"
-          stroke={tone.color}
-          strokeWidth={STROKE}
-          strokeLinecap="round"
-          strokeDasharray={CIRCUMFERENCE}
-          initial={{ strokeDashoffset: CIRCUMFERENCE }}
-          animate={{ strokeDashoffset: offset }}
-          transition={{ duration: 1, ease: [0.16, 1, 0.3, 1], delay: 0.1 }}
-        />
-      </svg>
-      <div className="-mt-9 flex flex-col items-center">
-        <span className="font-mono-num text-3xl font-bold text-slate-800 dark:text-slate-100">
-          {clamped}
-        </span>
-        <span className={cn("text-xs font-semibold", tone.text)}>{tone.label}</span>
+    <div className="flex flex-col items-center gap-3 py-2">
+      <div
+        className={cn(
+          "seal-ring grid h-[132px] w-[132px] animate-strike place-items-center rounded-full",
+          tone.ring,
+        )}
+        role="img"
+        aria-label={`Risk score ${clamped} of 100 — ${tone.band}`}
+      >
+        <div className="flex flex-col items-center leading-none">
+          <span className="eyebrow !text-[8px] !tracking-[0.22em] !text-current opacity-60">
+            Risk
+          </span>
+          <span
+            className={cn(
+              "font-mono-num mt-1.5 text-[40px] font-semibold leading-none",
+              tone.figure,
+            )}
+          >
+            {String(clamped).padStart(2, "0")}
+          </span>
+          <span className="mt-1.5 text-[9px] font-semibold uppercase tracking-[0.16em] opacity-70">
+            {tone.band}
+          </span>
+        </div>
       </div>
+      <p className="font-mono-num text-[10px] text-slate-400 dark:text-slate-500">
+        {clamped} / 100 · threshold 60
+      </p>
     </div>
   );
 }

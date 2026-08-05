@@ -25,9 +25,9 @@ export function ConfirmDialog({
 }) {
   const iconTone =
     variant === "danger"
-      ? "bg-red-50 text-status-critical dark:bg-red-950/40"
+      ? "bg-oxide/10 text-oxide dark:bg-oxide/20 dark:text-[#D98878]"
       : variant === "success"
-        ? "bg-green-50 text-status-good dark:bg-green-950/40"
+        ? "bg-brand-50 text-brand-700 dark:bg-brand-950/50 dark:text-brand-300"
         : "bg-brand-50 text-brand-600 dark:bg-brand-950/40";
 
   return (
