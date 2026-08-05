@@ -172,7 +172,7 @@ echo -n "$GEMINI_API_KEY" | \
 
 ## Rulesets
 
-Versioned YAML under `rulesets/{industry}/{jurisdiction}.yaml`. Eight rulesets included:
+Versioned YAML under `rulesets/{industry}/{jurisdiction}.yaml`. 15 rulesets included:
 
 | File | Industry | Jurisdiction |
 |---|---|---|
@@ -184,11 +184,23 @@ Versioned YAML under `rulesets/{industry}/{jurisdiction}.yaml`. Eight rulesets i
 | `data_privacy/in.yaml` | Data privacy (DPDP Act) | India |
 | `data_privacy/us-ca.yaml` | Data privacy (CCPA/CPRA) | California, USA |
 | `data_privacy/br.yaml` | Data privacy (LGPD) | Brazil |
+| `data_privacy/eu.yaml` | Data privacy (GDPR) | European Union |
+| `data_privacy/uk.yaml` | Data privacy (UK GDPR + DPA 2018) | United Kingdom |
+| `data_privacy/ca.yaml` | Data privacy (PIPEDA) | Canada |
+| `data_privacy/sg.yaml` | Data privacy (PDPA) | Singapore |
+| `data_privacy/cn.yaml` | Data privacy (PIPL) | China |
+| `data_privacy/za.yaml` | Data privacy (POPIA) | South Africa |
+| `data_privacy/au.yaml` | Data privacy (Privacy Act 1988 / NDB scheme) | Australia |
 
-The `data_privacy` rulesets are modeled on real, named laws (cited in each
-file's header) from public secondary guidance, not primary legal text — they
-are a structural starting point for a real global compliance product line,
-not a substitute for local legal review before real customer use.
+The `data_privacy` rulesets (11 jurisdictions, spanning the Middle East,
+Asia, Europe, North America, South America, Africa, and Oceania) are
+modeled on real, named laws (cited in each file's header) from public
+secondary guidance, not primary legal text — a structural starting point
+for a real global compliance product line, not a substitute for local
+legal review before real customer use. Where a law itself doesn't set a
+fixed statutory deadline (Canada, South Africa), the ruleset says so
+explicitly rather than inventing a precise number to look more complete
+than the underlying law actually is.
 
 To add a new ruleset: create the YAML (validated against the `RuleSet` Pydantic schema on load), bump `rule_set_version`, redeploy. No code changes needed.
 

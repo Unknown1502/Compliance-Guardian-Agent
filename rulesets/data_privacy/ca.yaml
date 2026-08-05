@@ -1,0 +1,45 @@
+# ComplianceGuardian ruleset — Data privacy compliance (Canada)
+# Modeled on PIPEDA (Personal Information Protection and Electronic
+# Documents Act), enforced by the OPC. Sourced from public secondary
+# guidance, NOT the primary statutory text — treat as a structural starting
+# point and have Canadian counsel review before relying on this for real
+# compliance decisions.
+# Note: unlike GDPR/PDPL-style regimes, PIPEDA does NOT set a fixed
+# statutory hour/day deadline for breach notification — it uses a "real
+# risk of significant harm" (RROSH) standard and requires notification "as
+# soon as feasible" once RROSH is determined. This ruleset does not invent
+# a precise statutory number where the law itself doesn't set one; the
+# 30-day figure below is a practical outer-bound drawn from OPC guidance
+# on what "as soon as feasible" tends to mean in practice, not a hard
+# statutory deadline — say so explicitly in any output referencing it.
+rule_set_version: "1.0.0"
+industry: "data_privacy"
+jurisdiction: "CA"
+required_fields:
+  - consent_record
+  - rrosh_assessment_record
+  - breach_identified_date
+  - breach_notified_date
+rules:
+  - id: "consent_documentation"
+    description: "Valid, documented consent is required for collecting, using, or disclosing personal information — the individual must be reasonably able to understand why their data is collected and the consequences of a breach or violation"
+    check_type: "field_presence"
+    severity: "critical"
+    params:
+      field: "consent_record"
+  - id: "rrosh_assessment_documented"
+    description: "When a security safeguard breach occurs, a documented assessment of whether it creates a 'real risk of significant harm' (RROSH) to individuals must be on file — this determination is what triggers (or doesn't trigger) the notification duty"
+    check_type: "field_presence"
+    severity: "high"
+    params:
+      field: "rrosh_assessment_record"
+  - id: "breach_notification_practical_timeframe"
+    description: "PIPEDA has no fixed statutory notification deadline — it requires notification 'as soon as feasible' once a real risk of significant harm is determined. OPC guidance in practice expects initial reports within days to a few weeks; flag as a concern (not a definite statutory violation) if notification took materially longer than that without documented justification."
+    check_type: "date_comparison"
+    severity: "medium"
+    params:
+      field: "breach_notified_date"
+      relative_to: "breach_identified_date"
+      maximum_days: 30
+      applies_when_present: true
+      note: "practical guidance benchmark, not a statutory deadline"

@@ -1,0 +1,42 @@
+# ComplianceGuardian ruleset — Data privacy compliance (Singapore)
+# Modeled on the Personal Data Protection Act (PDPA), enforced by the PDPC.
+# Sourced from public secondary guidance, NOT the primary statutory text —
+# treat as a structural starting point and have Singapore counsel review
+# before relying on this for real compliance decisions.
+rule_set_version: "1.0.0"
+industry: "data_privacy"
+jurisdiction: "SG"
+required_fields:
+  - consent_record
+  - dpo_contact_published
+  - breach_assessed_date
+  - pdpc_notified_date
+  - individuals_affected_count
+rules:
+  - id: "consent_documentation"
+    description: "Consent must be obtained before or at the time personal data is collected, with individuals notified of the purposes, and records maintained showing how consent was obtained"
+    check_type: "field_presence"
+    severity: "critical"
+    params:
+      field: "consent_record"
+  - id: "dpo_designated_and_published"
+    description: "Every organization must designate at least one Data Protection Officer (need not be a dedicated role) and publish their contact details — this is mandatory for all organizations under Singapore law, not conditional on scale"
+    check_type: "field_presence"
+    severity: "high"
+    params:
+      field: "dpo_contact_published"
+  - id: "breach_notification_pdpc_3d"
+    description: "Where a breach meets the notifiable threshold (significant harm, or significant scale affecting 500+ individuals), it must be reported to the PDPC as soon as practicable and no later than 3 calendar days from when the organization completes its assessment"
+    check_type: "date_comparison"
+    severity: "critical"
+    params:
+      field: "pdpc_notified_date"
+      relative_to: "breach_assessed_date"
+      maximum_days: 3
+      applies_when_present: true
+  - id: "breach_scale_threshold_check"
+    description: "A breach affecting 500 or more individuals meets the notifiable-scale threshold regardless of assessed harm severity — confirm the affected-individuals count is recorded so notifiability can be determined"
+    check_type: "field_presence"
+    severity: "medium"
+    params:
+      field: "individuals_affected_count"

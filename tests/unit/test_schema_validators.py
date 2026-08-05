@@ -190,6 +190,13 @@ class TestRulesets:
             ("data_privacy/in.yaml", "data_privacy", "1.0.0", 4),
             ("data_privacy/us-ca.yaml", "data_privacy", "1.0.0", 4),
             ("data_privacy/br.yaml", "data_privacy", "1.0.0", 4),
+            ("data_privacy/eu.yaml", "data_privacy", "1.0.0", 5),
+            ("data_privacy/uk.yaml", "data_privacy", "1.0.0", 4),
+            ("data_privacy/ca.yaml", "data_privacy", "1.0.0", 3),
+            ("data_privacy/sg.yaml", "data_privacy", "1.0.0", 4),
+            ("data_privacy/cn.yaml", "data_privacy", "1.0.0", 4),
+            ("data_privacy/za.yaml", "data_privacy", "1.0.0", 4),
+            ("data_privacy/au.yaml", "data_privacy", "1.0.0", 5),
         ],
     )
     def test_seeded_rulesets_valid(self, rel_path, industry, version, rule_count):

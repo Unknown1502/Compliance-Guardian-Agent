@@ -1,0 +1,55 @@
+# ComplianceGuardian ruleset — Data privacy compliance (European Union)
+# Modeled on the EU General Data Protection Regulation (GDPR). Sourced from
+# public secondary guidance, NOT the primary regulatory text — treat as a
+# structural starting point and have EU counsel review before relying on
+# this for real compliance decisions.
+rule_set_version: "1.0.0"
+industry: "data_privacy"
+jurisdiction: "EU"
+required_fields:
+  - lawful_basis_record
+  - breach_identified_date
+  - authority_notified_date
+  - high_risk_to_individuals
+  - individual_notified_date
+  - dpo_appointed_or_not_required
+  - subject_request_date
+  - subject_response_date
+rules:
+  - id: "lawful_basis_documented"
+    description: "A documented lawful basis for processing (consent, contract, legal obligation, vital interests, public task, or legitimate interests) must be on record before personal data is processed"
+    check_type: "field_presence"
+    severity: "critical"
+    params:
+      field: "lawful_basis_record"
+  - id: "breach_notification_authority_72h"
+    description: "A personal data breach likely to result in a risk to individuals' rights and freedoms must be notified to the competent supervisory authority within 72 hours of the controller becoming aware. A notification made after 72 hours must include a reasoned justification for the delay."
+    check_type: "date_comparison"
+    severity: "critical"
+    params:
+      field: "authority_notified_date"
+      relative_to: "breach_identified_date"
+      maximum_hours: 72
+      applies_when_present: true
+  - id: "breach_notification_individuals_high_risk"
+    description: "Where a breach is likely to result in a HIGH risk to individuals' rights and freedoms, affected individuals must be notified without undue delay. There is no fixed statutory deadline for this specific notification (unlike the 72-hour authority deadline), but unnecessary delay after the high-risk determination is a compliance failure in itself."
+    check_type: "field_presence"
+    severity: "high"
+    params:
+      field: "individual_notified_date"
+      applies_when: "high_risk_to_individuals is true"
+  - id: "dpo_appointment_when_required"
+    description: "A Data Protection Officer must be appointed by public authorities, organizations conducting large-scale systematic monitoring, or organizations processing special category data at scale. Most small businesses outside these categories are not required to appoint one — mark uncertain rather than fail if the processing scale/type is not stated."
+    check_type: "field_presence"
+    severity: "medium"
+    params:
+      field: "dpo_appointed_or_not_required"
+  - id: "subject_access_request_30d"
+    description: "Data subject rights requests (access, rectification, erasure, etc.) must be responded to within 30 days of receipt"
+    check_type: "date_comparison"
+    severity: "high"
+    params:
+      field: "subject_response_date"
+      relative_to: "subject_request_date"
+      maximum_days: 30
+      applies_when_present: true

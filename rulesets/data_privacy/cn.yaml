@@ -1,0 +1,46 @@
+# ComplianceGuardian ruleset — Data privacy compliance (China)
+# Modeled on the Personal Information Protection Law (PIPL), including the
+# November 2025 tiered breach-reporting measures. Sourced from public
+# secondary guidance, NOT the primary statutory text — treat as a
+# structural starting point and have PRC counsel review before relying on
+# this for real compliance decisions.
+rule_set_version: "1.0.0"
+industry: "data_privacy"
+jurisdiction: "CN"
+required_fields:
+  - consent_record
+  - is_cross_border_transfer
+  - cross_border_consent_record
+  - breach_identified_date
+  - breach_reported_date
+  - individuals_processed_count
+  - dpo_appointed_or_not_required
+rules:
+  - id: "consent_documentation"
+    description: "Consent must be obtained for personal information processing, and security measures implemented"
+    check_type: "field_presence"
+    severity: "critical"
+    params:
+      field: "consent_record"
+  - id: "cross_border_transfer_consent"
+    description: "Cross-border transfer of personal information requires a SEPARATE, specific consent from the individual — general processing consent does not cover this"
+    check_type: "field_presence"
+    severity: "critical"
+    params:
+      field: "cross_border_consent_record"
+      applies_when: "is_cross_border_transfer is true"
+  - id: "breach_reporting_window"
+    description: "Under November 2025 reporting measures, breaches must be reported on a tiered timeline: within 1 hour for Critical Information Infrastructure Operators (CIIOs), within 4 hours for general network operators. This ruleset applies the general 4-hour threshold as the default — a CIIO-classified business needs the stricter 1-hour standard reviewed separately."
+    check_type: "date_comparison"
+    severity: "critical"
+    params:
+      field: "breach_reported_date"
+      relative_to: "breach_identified_date"
+      maximum_hours: 4
+      applies_when_present: true
+  - id: "dpo_appointment_large_scale"
+    description: "A Data Protection Officer must be designated, with contact information disclosed to enforcement authorities, once an organization handles the personal information of more than 1 million individuals. Below that scale this is not mandated — mark uncertain rather than fail if the processing volume is not stated."
+    check_type: "field_presence"
+    severity: "medium"
+    params:
+      field: "dpo_appointed_or_not_required"

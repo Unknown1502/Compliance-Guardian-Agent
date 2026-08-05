@@ -1,0 +1,44 @@
+# ComplianceGuardian ruleset — Data privacy compliance (South Africa)
+# Modeled on POPIA (Protection of Personal Information Act), overseen by
+# the Information Regulator. Sourced from public secondary guidance, NOT
+# the primary statutory text — treat as a structural starting point and
+# have South African counsel review before relying on this for real
+# compliance decisions.
+# Note: POPIA requires "appropriate and immediate action" on a breach and
+# does not set a specific statutory hour/day notification deadline in the
+# way GDPR-style regimes do — this ruleset checks that notification
+# happened and is documented, not against an invented precise number.
+rule_set_version: "1.0.0"
+industry: "data_privacy"
+jurisdiction: "ZA"
+required_fields:
+  - consent_record
+  - information_officer_registered
+  - breach_identified_date
+  - regulator_notified_date
+  - subject_notified_date
+rules:
+  - id: "consent_documentation"
+    description: "Personal information must not be processed without a legal basis, most often consent — a voluntary, specific, and informed expression of will permitting the processing"
+    check_type: "field_presence"
+    severity: "critical"
+    params:
+      field: "consent_record"
+  - id: "information_officer_registered"
+    description: "Every responsible party must have an Information Officer (POPIA's equivalent of a DPO), registered with the Information Regulator"
+    check_type: "field_presence"
+    severity: "high"
+    params:
+      field: "information_officer_registered"
+  - id: "breach_notification_immediate"
+    description: "POPIA requires appropriate and immediate action on a security compromise, including notifying the Information Regulator and affected data subjects — the law does not specify a fixed hour/day deadline the way GDPR-style regimes do, so this checks that notification is documented as having occurred, not against an invented precise timeframe"
+    check_type: "field_presence"
+    severity: "critical"
+    params:
+      field: "regulator_notified_date"
+  - id: "data_subject_breach_notification"
+    description: "Affected data subjects must also be notified of a security compromise, not only the regulator"
+    check_type: "field_presence"
+    severity: "high"
+    params:
+      field: "subject_notified_date"

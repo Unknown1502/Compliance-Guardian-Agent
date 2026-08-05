@@ -1,0 +1,57 @@
+# ComplianceGuardian ruleset — Data privacy compliance (Australia)
+# Modeled on the Privacy Act 1988 (Cth), the Australian Privacy Principles
+# (APPs), and the Notifiable Data Breaches (NDB) scheme, enforced by the
+# OAIC. Sourced from public secondary guidance, NOT the primary statutory
+# text — treat as a structural starting point and have Australian counsel
+# review before relying on this for real compliance decisions.
+# Scope note: APP entities are Australian Government agencies and private
+# sector / not-for-profit organizations with annual turnover over AUD 3
+# million — most small businesses below that threshold are exempt from the
+# Privacy Act itself, though this doesn't affect the NDIS/aged-care
+# rulesets, which are separate industry-specific obligations.
+rule_set_version: "1.0.0"
+industry: "data_privacy"
+jurisdiction: "AU"
+required_fields:
+  - entity_turnover_exceeds_3m
+  - lawful_basis_record
+  - breach_suspected_date
+  - breach_assessed_date
+  - serious_harm_likely
+  - oaic_notified_date
+  - compliance_program_documented
+rules:
+  - id: "app_entity_scope_check"
+    description: "The Privacy Act's Australian Privacy Principles apply to Australian Government agencies and to private-sector/not-for-profit organizations with annual turnover over AUD 3 million. Confirm whether this threshold is met before treating other rules in this ruleset as mandatory."
+    check_type: "field_presence"
+    severity: "low"
+    params:
+      field: "entity_turnover_exceeds_3m"
+  - id: "lawful_basis_documented"
+    description: "A documented lawful basis or consent record for collecting and using personal information must be on file"
+    check_type: "field_presence"
+    severity: "critical"
+    params:
+      field: "lawful_basis_record"
+  - id: "breach_assessment_30d"
+    description: "On suspecting a data breach, a reasonable and expeditious assessment of whether it is likely to result in serious harm must be completed within 30 days"
+    check_type: "date_comparison"
+    severity: "high"
+    params:
+      field: "breach_assessed_date"
+      relative_to: "breach_suspected_date"
+      maximum_days: 30
+      applies_when_present: true
+  - id: "ndb_notification_when_serious_harm"
+    description: "Where the assessment determines a breach is likely to result in serious harm, both the OAIC and affected individuals must be notified under the Notifiable Data Breaches scheme"
+    check_type: "field_presence"
+    severity: "critical"
+    params:
+      field: "oaic_notified_date"
+      applies_when: "serious_harm_likely is true"
+  - id: "app1_compliance_program_documented"
+    description: "APP 1 requires entities to take reasonable steps to establish and maintain practices, procedures, and systems ensuring ongoing compliance with the Australian Privacy Principles — an internal privacy compliance program should be documented, not assumed"
+    check_type: "field_presence"
+    severity: "medium"
+    params:
+      field: "compliance_program_documented"

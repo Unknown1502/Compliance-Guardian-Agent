@@ -1,0 +1,44 @@
+# ComplianceGuardian ruleset — Data privacy compliance (United Kingdom)
+# Modeled on UK GDPR and the Data Protection Act 2018, enforced by the ICO.
+# Sourced from public secondary guidance, NOT the primary regulatory text —
+# treat as a structural starting point and have UK counsel review before
+# relying on this for real compliance decisions.
+rule_set_version: "1.0.0"
+industry: "data_privacy"
+jurisdiction: "UK"
+required_fields:
+  - consent_record
+  - breach_identified_date
+  - ico_notified_date
+  - high_risk_to_individuals
+  - individual_notified_date
+  - dpo_contact_published
+rules:
+  - id: "consent_documentation"
+    description: "Consent must be obtained per applicable requirements and consent records maintained"
+    check_type: "field_presence"
+    severity: "critical"
+    params:
+      field: "consent_record"
+  - id: "breach_notification_ico_72h"
+    description: "Where a breach is likely to result in a risk to individuals' rights and freedoms, it must be notified to the Information Commissioner's Office (ICO) without undue delay and no later than 72 hours after becoming aware"
+    check_type: "date_comparison"
+    severity: "critical"
+    params:
+      field: "ico_notified_date"
+      relative_to: "breach_identified_date"
+      maximum_hours: 72
+      applies_when_present: true
+  - id: "breach_notification_individuals_high_risk"
+    description: "Where a breach poses a high risk to individuals' rights and freedoms, affected individuals must also be communicated with directly"
+    check_type: "field_presence"
+    severity: "high"
+    params:
+      field: "individual_notified_date"
+      applies_when: "high_risk_to_individuals is true"
+  - id: "dpo_contact_published"
+    description: "The ICO breach report must include the Data Protection Officer's contact details and a description of mitigation measures taken"
+    check_type: "field_presence"
+    severity: "medium"
+    params:
+      field: "dpo_contact_published"
