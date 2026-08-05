@@ -56,3 +56,29 @@ variable "enable_api_docs" {
   type        = bool
   default     = false
 }
+
+variable "enable_billing" {
+  description = <<-EOT
+    Gates whether the Stripe secret_key_ref env vars are attached to the API
+    gateway container. Keep false until cg-stripe-secret-key and
+    cg-stripe-webhook-secret both have at least one real version populated —
+    Cloud Run fails to start a revision that references a secret with zero
+    versions, which would take down the ENTIRE gateway (signup, uploads,
+    everything), not just billing. Flip to true only after populating both
+    secrets via `gcloud secrets versions add` (see iam.tf).
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "stripe_price_id_oneoff" {
+  description = "Stripe Price ID for the one-off audit purchase. Set once created in the Stripe dashboard; irrelevant while enable_billing is false."
+  type        = string
+  default     = ""
+}
+
+variable "stripe_price_id_subscription" {
+  description = "Stripe Price ID for the monthly unlimited-audits subscription. Set once created in the Stripe dashboard; irrelevant while enable_billing is false."
+  type        = string
+  default     = ""
+}

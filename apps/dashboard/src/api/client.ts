@@ -112,6 +112,18 @@ export async function decideCheck(
   return jsonOrThrow(res);
 }
 
+export async function createCheckout(
+  session: Session,
+  plan: "oneoff" | "subscription",
+): Promise<{ checkout_url: string }> {
+  const res = await authedFetch(session, "/api/billing/checkout", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ plan }),
+  });
+  return jsonOrThrow(res);
+}
+
 export async function getAuditLogs(
   session: Session,
 ): Promise<{ events: import("../types").AuditEvent[]; count: number }> {

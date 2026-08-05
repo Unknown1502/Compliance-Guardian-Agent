@@ -185,6 +185,14 @@ class ReportResponse(BaseModel):
     used_fixture: bool
 
 
+class CheckoutRequest(BaseModel):
+    plan: str = Field(pattern="^(oneoff|subscription)$")
+
+
+class CheckoutResponse(BaseModel):
+    checkout_url: str
+
+
 # ---------------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------------
@@ -535,6 +543,80 @@ def get_report(
     if not blob.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="report not found")
     return HTMLResponse(content=blob.download_as_text())
+
+
+# ---------------------------------------------------------------------------
+# Billing
+#
+# Card collection is entirely Stripe-hosted (Checkout) — no card data ever
+# reaches this service, so there is no PCI scope here. tenant_id for the
+# webhook comes ONLY from the Checkout Session's client_reference_id/
+# metadata, which we set ourselves from the authenticated session when
+# creating it — never trusted from client-supplied request bodies.
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/billing/checkout", response_model=CheckoutResponse)
+def create_checkout(
+    req: CheckoutRequest, auth: AuthContext = Depends(require_auth)
+) -> CheckoutResponse:
+    from billing import BillingConfigError
+
+    try:
+        session = gw().billing().create_checkout_session(
+            tenant_id=auth.tenant_id, plan=req.plan, customer_email=auth.email
+        )
+    except BillingConfigError as exc:
+        # Stripe isn't configured yet (no account/keys). Fails as a normal
+        # 503, not a crash — every other endpoint keeps working.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+    return CheckoutResponse(checkout_url=session.checkout_url)
+
+
+@app.post("/api/billing/webhook", status_code=status.HTTP_200_OK)
+async def billing_webhook(request: Request) -> dict:
+    from billing import BillingConfigError, WebhookSignatureError
+
+    payload = await request.body()
+    signature = request.headers.get("stripe-signature", "")
+    g = gw()
+    try:
+        event = g.billing().parse_webhook(payload=payload, signature_header=signature)
+    except WebhookSignatureError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=f"invalid signature: {exc}"
+        ) from exc
+    except BillingConfigError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+
+    if event.event_type != "checkout.session.completed" or not event.tenant_id:
+        # Ignore every other event type (e.g. later subscription lifecycle
+        # events) for now — acknowledge with 200 so Stripe doesn't retry.
+        return {"received": True, "handled": False}
+
+    tenant = g.repo.get_tenant(event.tenant_id)
+    new_tier = PlanTier.PRO if event.mode == "subscription" else PlanTier.STARTER
+    tenant.plan_tier = new_tier
+    g.repo.upsert_tenant(tenant)
+    g.auditor.log(
+        tenant_id=event.tenant_id,
+        actor="stripe-webhook",
+        action="billing.subscribed" if event.mode == "subscription" else "billing.purchased",
+        dedup_key=f"stripe:{event.stripe_event_id}",
+        before_state=None,
+        after_state={
+            "plan_tier": new_tier.value,
+            "amount_total": event.amount_total,
+            "currency": event.currency,
+            "stripe_customer_id": event.stripe_customer_id,
+            "stripe_event_id": event.stripe_event_id,
+        },
+    )
+    return {"received": True, "handled": True}
 
 
 # ---------------------------------------------------------------------------

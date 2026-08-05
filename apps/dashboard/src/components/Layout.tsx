@@ -6,6 +6,7 @@ import {
   UploadCloud,
   ScrollText,
   FileBarChart2,
+  CreditCard,
   LogOut,
   Menu,
   X,
@@ -30,6 +31,7 @@ const GROUPS = [
     items: [
       { to: "/audit", label: "Audit log", icon: ScrollText },
       { to: "/reports", label: "Reports", icon: FileBarChart2 },
+      { to: "/billing", label: "Billing", icon: CreditCard },
     ],
   },
 ];

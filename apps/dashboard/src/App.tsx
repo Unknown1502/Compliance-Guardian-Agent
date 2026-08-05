@@ -10,6 +10,7 @@ import { UploadView } from "./views/UploadView";
 import { CheckDetail } from "./views/CheckDetail";
 import { AuditLog } from "./views/AuditLog";
 import { ReportsView } from "./views/ReportsView";
+import { BillingView } from "./views/BillingView";
 
 function SplashScreen() {
   return (
@@ -47,6 +48,7 @@ function Gate() {
         <Route path="checks/:checkId" element={<CheckDetail />} />
         <Route path="audit" element={<AuditLog />} />
         <Route path="reports" element={<ReportsView />} />
+        <Route path="billing" element={<BillingView />} />
       </Route>
     </Routes>
   );
