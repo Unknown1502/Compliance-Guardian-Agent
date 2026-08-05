@@ -172,11 +172,12 @@ echo -n "$GEMINI_API_KEY" | \
 
 ## Rulesets
 
-Versioned YAML under `rulesets/{industry}/{jurisdiction}.yaml`. Three rulesets included:
+Versioned YAML under `rulesets/{industry}/{jurisdiction}.yaml`. Four rulesets included:
 
 | File | Industry | Jurisdiction |
 |---|---|---|
 | `healthcare_ndis/au.yaml` | NDIS providers | Australia |
+| `aged_care/au.yaml` | Aged care providers | Australia |
 | `contract_review/generic.yaml` | Commercial contracts | Generic |
 | `bookkeeping/au.yaml` | Supplier invoices | Australia |
 

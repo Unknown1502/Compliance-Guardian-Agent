@@ -1,0 +1,60 @@
+# ComplianceGuardian ruleset — Aged Care providers (Australia)
+# Second industry on the platform after healthcare_ndis, added to demonstrate
+# the ruleset architecture generalizes: this file alone (validated against the
+# RuleSet Pydantic schema on load) is the entire integration — no code changes.
+# Modeled on the Aged Care Quality Standards and the Serious Incident Response
+# Scheme (SIRS) administered by the Aged Care Quality and Safety Commission.
+rule_set_version: "1.0.0"
+industry: "aged_care"
+jurisdiction: "AU"
+required_fields:
+  - resident_name
+  - care_plan_date
+  - consent_record
+  - approved_provider_number
+  - police_check_date
+rules:
+  - id: "approved_provider_registration"
+    description: "Approved provider number must be present and match the Aged Care Quality and Safety Commission format"
+    check_type: "pattern_match"
+    severity: "critical"
+    params:
+      field: "approved_provider_number"
+      pattern: "^AC-\\d{6,}$"
+  - id: "care_plan_consent"
+    description: "Documented consent from the care recipient (or their representative) is required before a care plan is implemented"
+    check_type: "field_presence"
+    severity: "critical"
+    params:
+      field: "consent_record"
+  - id: "care_plan_review_cycle"
+    description: "Care plans must be formally reviewed at least every 12 months, or sooner following a significant change in a resident's care needs"
+    check_type: "date_comparison"
+    severity: "high"
+    params:
+      field: "care_plan_review_date"
+      relative_to: "care_plan_date"
+      maximum_months: 12
+  - id: "worker_police_check_currency"
+    description: "Staff and volunteers with access to care recipients must hold a National Police Certificate no older than 3 years"
+    check_type: "date_comparison"
+    severity: "high"
+    params:
+      field: "police_check_date"
+      relative_to: "service_date"
+      maximum_years: 3
+  - id: "sirs_priority1_reporting_window"
+    description: "Priority 1 reportable incidents under the Serious Incident Response Scheme must be notified to the Aged Care Quality and Safety Commission within 24 hours of the provider becoming aware"
+    check_type: "date_comparison"
+    severity: "critical"
+    params:
+      field: "incident_report_date"
+      relative_to: "incident_identified_date"
+      maximum_hours: 24
+      applies_when_present: true
+  - id: "medication_administration_record"
+    description: "A signed medication administration record is required whenever medication is administered to a resident by staff"
+    check_type: "field_presence"
+    severity: "high"
+    params:
+      field: "medication_record"
