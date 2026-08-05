@@ -67,6 +67,36 @@ export function ReportsView() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<ReportSummary | null>(null);
+  const [openingId, setOpeningId] = useState<string | null>(null);
+
+  // The report endpoint requires a bearer token, so a plain <a href> would
+  // navigate without one and render the API's "Missing bearer token" error.
+  // Fetch it with the token, then hand the browser a blob URL instead.
+  const openReport = async (reportId: string) => {
+    if (!session) return;
+    setOpeningId(reportId);
+    try {
+      const token = await session.getToken();
+      const res = await fetch(`${API_BASE_URL}/api/reports/${reportId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new ApiError(res.status, body.detail ?? res.statusText);
+      }
+      const url = URL.createObjectURL(
+        new Blob([await res.text()], { type: "text/html" }),
+      );
+      window.open(url, "_blank", "noopener,noreferrer");
+      // Give the new tab time to load before releasing the object URL.
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (err) {
+      const msg = (err as Error).message;
+      toast.push({ kind: "error", title: "Could not open report", description: msg });
+    } finally {
+      setOpeningId(null);
+    }
+  };
 
   const generate = async () => {
     if (!session) return;
@@ -148,15 +178,15 @@ export function ReportsView() {
                 title={`${report.period_start.split("T")[0]} – ${report.period_end.split("T")[0]}`}
                 subtitle={<span className="font-mono-num">{report.report_id}</span>}
                 action={
-                  <a
-                    href={`${API_BASE_URL}/api/reports/${report.report_id}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1 text-sm font-medium text-brand-600 hover:text-brand-700 dark:text-brand-400"
+                  <button
+                    type="button"
+                    onClick={() => openReport(report.report_id)}
+                    disabled={openingId === report.report_id}
+                    className="inline-flex items-center gap-1 text-sm font-medium text-brand-600 transition-colors hover:text-brand-700 disabled:opacity-50 dark:text-brand-400"
                   >
-                    View full HTML
+                    {openingId === report.report_id ? "Opening…" : "View full HTML"}
                     <ExternalLink size={13} />
-                  </a>
+                  </button>
                 }
               />
 
