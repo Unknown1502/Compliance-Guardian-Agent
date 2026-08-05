@@ -1,0 +1,49 @@
+# ComplianceGuardian ruleset — Data privacy compliance (Brazil)
+# Modeled on the Lei Geral de Proteção de Dados (LGPD). Sourced from public
+# secondary guidance, NOT the primary statutory text — treat as a
+# structural starting point and have Brazilian counsel review before
+# relying on this for real compliance decisions.
+# LGPD applies to any processing of personal data in Brazil, of individuals
+# in Brazil, or of data collected in Brazil, regardless of where the
+# processing organization is located.
+rule_set_version: "1.0.0"
+industry: "data_privacy"
+jurisdiction: "BR"
+required_fields:
+  - consent_record
+  - dpo_appointed
+  - breach_identified_date
+  - breach_notified_date
+  - access_request_date
+  - access_response_date
+rules:
+  - id: "consent_documentation"
+    description: "Explicit, documented consent with a clear explanation of the purpose of processing is required before collecting personal data, unless another of LGPD's ten legal bases for processing is explicitly recorded"
+    check_type: "field_presence"
+    severity: "critical"
+    params:
+      field: "consent_record"
+  - id: "dpo_appointment"
+    description: "Every data controller must appoint a Data Protection Officer (encarregado). ANPD may exempt small businesses from this requirement in future guidance but has not broadly done so — do not assume an exemption applies without it being explicitly stated."
+    check_type: "field_presence"
+    severity: "high"
+    params:
+      field: "dpo_appointed"
+  - id: "breach_notification_72h"
+    description: "A data breach must be reported to the Brazilian Data Protection Authority (ANPD), and in some cases to affected individuals, within 72 hours of the controller becoming aware"
+    check_type: "date_comparison"
+    severity: "critical"
+    params:
+      field: "breach_notified_date"
+      relative_to: "breach_identified_date"
+      maximum_hours: 72
+      applies_when_present: true
+  - id: "data_subject_access_response_15d"
+    description: "A data subject's request for access to their personal data must receive a detailed response within 15 days maximum"
+    check_type: "date_comparison"
+    severity: "high"
+    params:
+      field: "access_response_date"
+      relative_to: "access_request_date"
+      maximum_days: 15
+      applies_when_present: true

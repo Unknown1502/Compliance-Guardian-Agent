@@ -1,0 +1,46 @@
+# ComplianceGuardian ruleset — Data privacy compliance (United Arab Emirates)
+# Modeled on UAE Federal Decree-Law No. 45 of 2021 (Personal Data Protection
+# Law) and its implementing Cabinet Decision No. 33 of 2024. Sourced from
+# public secondary guidance (law firm and compliance-vendor summaries), NOT
+# the primary legal text — treat as a structural starting point and have
+# UAE counsel review before relying on this for real compliance decisions.
+# PDPL has extra-territorial scope: it applies to processing of any
+# individual located in the UAE, regardless of where the processing entity
+# is established.
+rule_set_version: "1.0.0"
+industry: "data_privacy"
+jurisdiction: "AE"
+required_fields:
+  - data_subject_type
+  - consent_record
+  - breach_identified_date
+  - breach_notified_date
+  - security_measures_record
+rules:
+  - id: "consent_documentation"
+    description: "A documented consent record is required before processing personal data, unless another lawful basis (contractual necessity, legal obligation, legitimate interest) is explicitly recorded. Consent must be freely given, specific, informed, and unambiguous, with a withdrawal mechanism."
+    check_type: "field_presence"
+    severity: "critical"
+    params:
+      field: "consent_record"
+  - id: "breach_notification_72h"
+    description: "Under Article 11 of the PDPL, a personal data breach likely to result in a risk to individuals' rights or freedoms must be notified to the UAE Data Office within 72 hours of the controller becoming aware of it"
+    check_type: "date_comparison"
+    severity: "critical"
+    params:
+      field: "breach_notified_date"
+      relative_to: "breach_identified_date"
+      maximum_hours: 72
+      applies_when_present: true
+  - id: "security_measures_documented"
+    description: "Appropriate technical and organizational measures to protect personal data against unauthorized access, destruction, loss, alteration, or disclosure must be documented"
+    check_type: "field_presence"
+    severity: "high"
+    params:
+      field: "security_measures_record"
+  - id: "dpo_appointment_when_high_risk"
+    description: "A Data Protection Officer must be appointed where core activities involve large-scale processing of sensitive personal data or processing likely to result in high risk to data subjects. Most SMEs processing only ordinary customer/employee data at modest scale are not required to appoint one — mark uncertain rather than fail if the processing scale/sensitivity is not stated."
+    check_type: "field_presence"
+    severity: "medium"
+    params:
+      field: "dpo_appointed_or_not_required"

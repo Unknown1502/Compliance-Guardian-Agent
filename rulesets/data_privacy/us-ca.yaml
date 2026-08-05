@@ -1,0 +1,54 @@
+# ComplianceGuardian ruleset — Data privacy compliance (California, USA)
+# Modeled on the CCPA as amended by the CPRA, including the SB 446 breach
+# notification amendment effective January 1, 2026. Deliberately scoped to
+# California, not "the US" — there is no single federal US privacy law, and
+# claiming broader coverage would overstate what this ruleset actually
+# checks. Sourced from public secondary guidance, NOT the primary statutory
+# text — have California counsel review before relying on this for real
+# compliance decisions.
+# Applies only to for-profit businesses meeting at least one threshold:
+# >$25M annual gross revenue, buying/selling/sharing PI of 100,000+
+# consumers/households, or deriving 50%+ of revenue from selling/sharing PI.
+rule_set_version: "1.0.0"
+industry: "data_privacy"
+jurisdiction: "US-CA"
+required_fields:
+  - business_meets_ccpa_threshold
+  - opt_out_mechanism_record
+  - breach_identified_date
+  - consumer_notified_date
+  - ag_report_date
+rules:
+  - id: "opt_out_mechanism_documented"
+    description: "A documented, working mechanism for consumers to opt out of the sale/sharing of personal information, and to limit use of sensitive personal information, must exist and be honored across connected systems"
+    check_type: "field_presence"
+    severity: "high"
+    params:
+      field: "opt_out_mechanism_record"
+  - id: "breach_notification_consumer_30d"
+    description: "Under SB 446 (effective Jan 1, 2026), affected California residents must be notified of a data breach within 30 calendar days of discovery"
+    check_type: "date_comparison"
+    severity: "critical"
+    params:
+      field: "consumer_notified_date"
+      relative_to: "breach_identified_date"
+      maximum_days: 30
+      applies_when_present: true
+  - id: "breach_notification_ag_report"
+    description: "An Attorney General report is due within 15 days of the consumer notification going out"
+    check_type: "date_comparison"
+    severity: "high"
+    params:
+      field: "ag_report_date"
+      relative_to: "consumer_notified_date"
+      maximum_days: 15
+      applies_when_present: true
+  - id: "annual_cybersecurity_audit_current"
+    description: "Businesses meeting the CPPA's revenue/data-processing thresholds must complete an independent annual cybersecurity audit and certify it to the CPPA by April 1 each year"
+    check_type: "date_comparison"
+    severity: "medium"
+    params:
+      field: "last_cybersecurity_audit_date"
+      relative_to: "service_date"
+      maximum_months: 12
+      applies_when_present: true

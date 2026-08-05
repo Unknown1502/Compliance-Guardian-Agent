@@ -172,7 +172,7 @@ echo -n "$GEMINI_API_KEY" | \
 
 ## Rulesets
 
-Versioned YAML under `rulesets/{industry}/{jurisdiction}.yaml`. Four rulesets included:
+Versioned YAML under `rulesets/{industry}/{jurisdiction}.yaml`. Eight rulesets included:
 
 | File | Industry | Jurisdiction |
 |---|---|---|
@@ -180,6 +180,15 @@ Versioned YAML under `rulesets/{industry}/{jurisdiction}.yaml`. Four rulesets in
 | `aged_care/au.yaml` | Aged care providers | Australia |
 | `contract_review/generic.yaml` | Commercial contracts | Generic |
 | `bookkeeping/au.yaml` | Supplier invoices | Australia |
+| `data_privacy/ae.yaml` | Data privacy (PDPL) | United Arab Emirates |
+| `data_privacy/in.yaml` | Data privacy (DPDP Act) | India |
+| `data_privacy/us-ca.yaml` | Data privacy (CCPA/CPRA) | California, USA |
+| `data_privacy/br.yaml` | Data privacy (LGPD) | Brazil |
+
+The `data_privacy` rulesets are modeled on real, named laws (cited in each
+file's header) from public secondary guidance, not primary legal text — they
+are a structural starting point for a real global compliance product line,
+not a substitute for local legal review before real customer use.
 
 To add a new ruleset: create the YAML (validated against the `RuleSet` Pydantic schema on load), bump `rule_set_version`, redeploy. No code changes needed.
 

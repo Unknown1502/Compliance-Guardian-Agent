@@ -1,0 +1,48 @@
+# ComplianceGuardian ruleset — Data privacy compliance (India)
+# Modeled on the Digital Personal Data Protection Act, 2023 and the DPDP
+# Rules, 2025. Sourced from public secondary guidance (law firm and
+# compliance-vendor summaries), NOT the primary legal text — treat as a
+# structural starting point and have Indian counsel review before relying
+# on this for real compliance decisions.
+# Note: the Act's obligations phase in through May 13, 2027 (Data
+# Protection Board constituted Nov 2025, consent-manager registration
+# activates Nov 2026, full enforcement May 2027) — consent and breach
+# notification practices are worth building now regardless of the phase-in.
+rule_set_version: "1.0.0"
+industry: "data_privacy"
+jurisdiction: "IN"
+required_fields:
+  - consent_record
+  - privacy_notice_provided
+  - breach_identified_date
+  - breach_notified_date
+  - data_subject_is_minor
+rules:
+  - id: "consent_documentation"
+    description: "Consent from the Data Principal must be free, specific, informed, unconditional, and unambiguous, and documented. A withdrawal mechanism of equal simplicity to giving consent must also exist."
+    check_type: "field_presence"
+    severity: "critical"
+    params:
+      field: "consent_record"
+  - id: "privacy_notice_provided"
+    description: "A standalone, plain-language privacy notice specifying the purpose of processing, categories of data collected, retention period, and the consent-withdrawal mechanism must be provided to the Data Principal"
+    check_type: "field_presence"
+    severity: "high"
+    params:
+      field: "privacy_notice_provided"
+  - id: "breach_notification_72h"
+    description: "A personal data breach must be notified to the Data Protection Board and to affected Data Principals within 72 hours of becoming aware — there is no de minimis threshold; every breach must be reported"
+    check_type: "date_comparison"
+    severity: "critical"
+    params:
+      field: "breach_notified_date"
+      relative_to: "breach_identified_date"
+      maximum_hours: 72
+      applies_when_present: true
+  - id: "children_parental_consent"
+    description: "Where the data subject is under 18, verifiable parental consent is required, and tracking, behavioral monitoring, or targeted advertising directed at children is prohibited"
+    check_type: "field_presence"
+    severity: "critical"
+    params:
+      field: "parental_consent_record"
+      applies_when: "data_subject_is_minor is true"

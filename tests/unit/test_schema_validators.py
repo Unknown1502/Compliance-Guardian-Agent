@@ -185,6 +185,11 @@ class TestRulesets:
             ("healthcare_ndis/au.yaml", "healthcare_ndis", "1.0.0", 5),
             ("contract_review/generic.yaml", "contract_review", "1.0.0", 6),
             ("bookkeeping/au.yaml", "bookkeeping", "1.0.0", 5),
+            ("aged_care/au.yaml", "aged_care", "1.0.0", 6),
+            ("data_privacy/ae.yaml", "data_privacy", "1.0.0", 4),
+            ("data_privacy/in.yaml", "data_privacy", "1.0.0", 4),
+            ("data_privacy/us-ca.yaml", "data_privacy", "1.0.0", 4),
+            ("data_privacy/br.yaml", "data_privacy", "1.0.0", 4),
         ],
     )
     def test_seeded_rulesets_valid(self, rel_path, industry, version, rule_count):
