@@ -2,15 +2,23 @@ import type { LucideIcon } from "lucide-react";
 import { cn } from "../../lib/cn";
 import { AnimatedNumber } from "./AnimatedNumber";
 
-// Ledger tallies, not dashboard tiles: the figure leads, the label sits under
-// a hairline. No icon chips, no tinted squares.
+// KPI reading: small uppercase label above, large figure below, with a small
+// ring showing the share of total where one applies.
 
 const TONES = {
-  brand: "text-brand-700 dark:text-brand-300",
-  good: "text-brand-700 dark:text-brand-300",
-  warning: "text-brass dark:text-[#D6AD57]",
-  critical: "text-oxide dark:text-[#D98878]",
-  neutral: "text-slate-700 dark:text-slate-200",
+  brand: "text-slate-900 dark:text-slate-50",
+  good: "text-status-good",
+  warning: "text-status-warning",
+  critical: "text-status-critical",
+  neutral: "text-slate-900 dark:text-slate-50",
+} as const;
+
+const RING = {
+  brand: "#2563EB",
+  good: "#16A34A",
+  warning: "#EA580C",
+  critical: "#DC2626",
+  neutral: "#A8A29B",
 } as const;
 
 export function StatCard({
@@ -18,22 +26,56 @@ export function StatCard({
   value,
   tone = "brand",
   suffix,
+  total,
 }: {
   label: string;
   value: number;
-  /** Accepted for call-site compatibility; the design no longer shows icons. */
+  /** Accepted for call-site compatibility; this design leads with the figure. */
   icon?: LucideIcon;
   tone?: keyof typeof TONES;
   index?: number;
   suffix?: string;
+  total?: number;
 }) {
+  const pct = total && total > 0 ? Math.round((value / total) * 100) : null;
+  const R = 9;
+  const C = 2 * Math.PI * R;
+
   return (
-    <div className="border-t-2 border-slate-900 pt-3 dark:border-slate-100">
-      <div className={cn("font-mono-num text-[30px] font-semibold leading-none", TONES[tone])}>
-        <AnimatedNumber value={value} />
-        {suffix}
+    <div>
+      <div className="eyebrow">{label}</div>
+      <div className="mt-1.5 flex items-center gap-2">
+        {pct !== null && (
+          <svg width="22" height="22" viewBox="0 0 22 22" className="-rotate-90 shrink-0">
+            <circle cx="11" cy="11" r={R} fill="none" strokeWidth="3" className="stroke-slate-200 dark:stroke-slate-700" />
+            <circle
+              cx="11"
+              cy="11"
+              r={R}
+              fill="none"
+              strokeWidth="3"
+              strokeLinecap="round"
+              stroke={RING[tone]}
+              strokeDasharray={C}
+              strokeDashoffset={C - (pct / 100) * C}
+            />
+          </svg>
+        )}
+        <span
+          className={cn(
+            "font-mono-num text-[26px] font-bold leading-none tracking-tight",
+            TONES[tone],
+          )}
+        >
+          <AnimatedNumber value={value} />
+          {suffix}
+        </span>
+        {pct !== null && (
+          <span className="font-mono-num text-[13px] font-medium text-slate-500 dark:text-slate-400">
+            {pct}%
+          </span>
+        )}
       </div>
-      <div className="eyebrow mt-2">{label}</div>
     </div>
   );
 }

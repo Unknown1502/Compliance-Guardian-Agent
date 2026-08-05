@@ -16,21 +16,20 @@ interface ButtonProps extends Omit<HTMLMotionProps<"button">, "ref" | "children"
 
 const VARIANTS: Record<Variant, string> = {
   primary:
-    "bg-brand-600 text-white hover:bg-brand-700 disabled:hover:bg-brand-600 dark:bg-brand-500 dark:hover:bg-brand-400",
+    "bg-brand-600 text-white shadow-soft hover:bg-brand-700 disabled:hover:bg-brand-600 dark:bg-brand-500 dark:hover:bg-brand-400",
   secondary:
-    "bg-slate-200 text-slate-800 hover:bg-slate-300 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700",
+    "bg-slate-100 text-slate-800 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700",
   outline:
-    "border border-slate-400 text-slate-700 hover:border-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-900",
-  ghost:
-    "text-slate-600 hover:bg-slate-200 dark:text-slate-300 dark:hover:bg-slate-800",
-  danger: "bg-oxide text-white hover:bg-[#83301F] disabled:hover:bg-oxide",
-  success: "bg-brand-600 text-white hover:bg-brand-700 disabled:hover:bg-brand-600",
+    "border border-slate-300 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800",
+  ghost: "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800",
+  danger: "bg-status-critical text-white shadow-soft hover:bg-red-700 disabled:hover:bg-status-critical",
+  success: "bg-status-good text-white shadow-soft hover:bg-green-700 disabled:hover:bg-status-good",
 };
 
 const SIZES: Record<Size, string> = {
-  sm: "text-[11.5px] px-3 py-1.5 gap-1.5 tracking-[0.04em]",
-  md: "text-[12.5px] px-4 py-2 gap-2 tracking-[0.04em]",
-  lg: "text-[13px] px-5 py-2.5 gap-2 tracking-[0.04em]",
+  sm: "text-[12.5px] px-3 py-1.5 gap-1.5 rounded-lg",
+  md: "text-[13px] px-3.5 py-2 gap-2 rounded-lg",
+  lg: "text-[13.5px] px-4 py-2.5 gap-2 rounded-lg",
 };
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
@@ -45,7 +44,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         transition={{ duration: 0.1 }}
         disabled={disabled || loading}
         className={cn(
-          "inline-flex select-none items-center justify-center font-semibold uppercase transition-colors focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50",
+          "inline-flex select-none items-center justify-center font-medium transition-colors focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50",
           VARIANTS[variant],
           SIZES[size],
           className,

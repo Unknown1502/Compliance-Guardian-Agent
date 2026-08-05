@@ -136,7 +136,7 @@ export function ReportsView() {
             className="space-y-4"
           >
             {report.used_fixture && (
-              <div className="flex items-center gap-2 rounded-xl border border-brass/35 bg-brass/[0.06] px-4 py-2.5 text-sm text-brass dark:bg-brass/10 dark:text-[#D6AD57]">
+              <div className="flex items-center gap-2 rounded-xl border border-orange-200 bg-orange-50 px-4 py-2.5 text-sm text-status-warning dark:border-orange-900/60 dark:bg-orange-950/25 dark:text-orange-400">
                 <AlertTriangle size={15} className="shrink-0" />
                 Executive summary generated with a fixture (no GEMINI_API_KEY set). Set
                 the key and regenerate for a real Gemini-authored summary.

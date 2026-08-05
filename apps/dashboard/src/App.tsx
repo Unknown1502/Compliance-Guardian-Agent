@@ -21,11 +21,8 @@ function SplashScreen() {
         className="flex flex-col items-center gap-3"
       >
         <div className="flex items-baseline gap-[3px]">
-          <span className="font-display text-lg font-semibold leading-none tracking-tight text-slate-900 dark:text-slate-50">
-            Compliance
-          </span>
-          <span className="font-display text-lg font-normal italic leading-none tracking-tight text-brand-700 dark:text-brand-300">
-            Guardian
+          <span className="text-[17px] font-bold tracking-tight text-slate-900 dark:text-slate-50">
+            ComplianceGuardian
           </span>
         </div>
         <motion.div

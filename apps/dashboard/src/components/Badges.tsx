@@ -1,71 +1,90 @@
+import {
+  CheckCircle2,
+  Clock,
+  Flag,
+  XCircle,
+  Loader2,
+  HelpCircle,
+  AlertTriangle,
+} from "lucide-react";
 import type { CheckDecision, DocumentStatus, VerdictStatus } from "../types";
 import { cn } from "../lib/cn";
 
-// Stamps, not pills. Squared, ruled, letterpress caps — the vocabulary of a
-// record that was marked rather than a status that was rendered.
+// Status reads from the icon + word first, colour second — never colour alone.
 
-const STAMP_BASE =
-  "inline-flex items-center gap-1.5 border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.08em]";
+const BASE = "inline-flex items-center gap-1.5 text-[12.5px] font-medium";
 
 export function RiskBadge({ score }: { score: number }) {
   const tone =
     score >= 60
-      ? "border-oxide/35 text-oxide dark:border-oxide/50 dark:text-[#D98878]"
+      ? "text-status-critical"
       : score >= 30
-        ? "border-brass/35 text-brass dark:border-brass/50 dark:text-[#D6AD57]"
-        : "border-brand-600/30 text-brand-700 dark:border-brand-400/40 dark:text-brand-300";
+        ? "text-status-warning"
+        : "text-status-good";
   return (
-    <span className={cn(STAMP_BASE, "font-mono-num tracking-normal", tone)}>
-      {String(score).padStart(2, "0")}
-      <span className="text-[9px] opacity-55">/100</span>
-    </span>
+    <span className={cn("font-mono-num text-[13px] font-semibold", tone)}>{score}</span>
   );
 }
 
 export function DecisionBadge({ decision }: { decision: CheckDecision }) {
-  const map: Record<CheckDecision, { cls: string; label: string }> = {
-    auto_approved: {
-      cls: "border-brand-600/30 text-brand-700 bg-brand-50 dark:border-brand-400/40 dark:text-brand-300 dark:bg-brand-950/50",
-      label: "Approved",
-    },
-    escalated: {
-      cls: "border-brass/35 text-brass bg-brass/[0.06] dark:border-brass/50 dark:text-[#D6AD57] dark:bg-brass/10",
-      label: "Escalated",
-    },
-    rejected: {
-      cls: "border-oxide/35 text-oxide bg-oxide/[0.06] dark:border-oxide/50 dark:text-[#D98878] dark:bg-oxide/10",
-      label: "Rejected",
-    },
+  const map: Record<CheckDecision, { cls: string; icon: typeof CheckCircle2; label: string }> = {
+    auto_approved: { cls: "text-status-good", icon: CheckCircle2, label: "Approved" },
+    escalated: { cls: "text-status-warning", icon: Flag, label: "Escalated" },
+    rejected: { cls: "text-status-critical", icon: XCircle, label: "Rejected" },
   };
-  const { cls, label } = map[decision];
-  return <span className={cn(STAMP_BASE, cls)}>{label}</span>;
+  const { cls, icon: Icon, label } = map[decision];
+  return (
+    <span className={cn(BASE, cls)}>
+      <Icon size={14} strokeWidth={2.25} />
+      {label}
+    </span>
+  );
 }
 
 export function StatusBadge({ status }: { status: DocumentStatus | string }) {
-  const map: Record<string, string> = {
-    processed: "border-brand-600/30 text-brand-700 dark:border-brand-400/40 dark:text-brand-300",
-    succeeded: "border-brand-600/30 text-brand-700 dark:border-brand-400/40 dark:text-brand-300",
-    failed: "border-oxide/35 text-oxide dark:border-oxide/50 dark:text-[#D98878]",
-    running: "border-slate-400/40 text-slate-600 dark:border-slate-500/50 dark:text-slate-300",
-    pending: "border-slate-300 text-slate-500 dark:border-slate-700 dark:text-slate-400",
-    queued: "border-slate-300 text-slate-500 dark:border-slate-700 dark:text-slate-400",
+  const map: Record<string, { cls: string; icon: typeof Clock }> = {
+    processed: { cls: "text-status-good", icon: CheckCircle2 },
+    succeeded: { cls: "text-status-good", icon: CheckCircle2 },
+    failed: { cls: "text-status-critical", icon: AlertTriangle },
+    running: { cls: "text-brand-600 dark:text-brand-400", icon: Loader2 },
+    pending: { cls: "text-slate-500 dark:text-slate-400", icon: Clock },
+    queued: { cls: "text-slate-500 dark:text-slate-400", icon: Clock },
   };
-  const cls = map[status] ?? "border-slate-300 text-slate-500 dark:border-slate-700 dark:text-slate-400";
+  const entry = map[status] ?? { cls: "text-slate-500 dark:text-slate-400", icon: HelpCircle };
+  const Icon = entry.icon;
   return (
-    <span className={cn(STAMP_BASE, cls)}>
-      {status === "running" && (
-        <span className="h-1 w-1 animate-pulse bg-current" aria-hidden="true" />
-      )}
+    <span className={cn(BASE, "capitalize", entry.cls)}>
+      <Icon size={14} strokeWidth={2.25} className={status === "running" ? "animate-spin" : ""} />
       {status}
     </span>
   );
 }
 
 export function VerdictPill({ status }: { status: VerdictStatus }) {
-  const map: Record<VerdictStatus, string> = {
-    pass: "border-brand-600/30 text-brand-700 dark:border-brand-400/40 dark:text-brand-300",
-    fail: "border-oxide/35 text-oxide dark:border-oxide/50 dark:text-[#D98878]",
-    uncertain: "border-brass/35 text-brass dark:border-brass/50 dark:text-[#D6AD57]",
+  const map: Record<VerdictStatus, { cls: string; icon: typeof CheckCircle2 }> = {
+    pass: {
+      cls: "bg-green-50 text-status-good ring-green-200 dark:bg-green-950/40 dark:text-green-400 dark:ring-green-900",
+      icon: CheckCircle2,
+    },
+    fail: {
+      cls: "bg-red-50 text-status-critical ring-red-200 dark:bg-red-950/40 dark:text-red-400 dark:ring-red-900",
+      icon: XCircle,
+    },
+    uncertain: {
+      cls: "bg-orange-50 text-status-warning ring-orange-200 dark:bg-orange-950/40 dark:text-orange-400 dark:ring-orange-900",
+      icon: HelpCircle,
+    },
   };
-  return <span className={cn(STAMP_BASE, map[status])}>{status}</span>;
+  const { cls, icon: Icon } = map[status];
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ring-1 ring-inset",
+        cls,
+      )}
+    >
+      <Icon size={11} strokeWidth={2.5} />
+      {status}
+    </span>
+  );
 }

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ShieldCheck, CheckCircle2, XCircle, ArrowRight } from "lucide-react";
 import { AUTH_MODE } from "../config";
 import { useAuth } from "../auth/AuthContext";
 import type { Role } from "../types";
@@ -17,18 +18,17 @@ const ROLES: { id: Role; label: string }[] = [
   { id: "admin", label: "Admin" },
 ];
 
-// A real specimen line from the register — the product's actual output, used
-// as the hero rather than a claim about it.
-const SPECIMEN = [
-  { clause: "consent_documentation", verdict: "fail", note: "No signed consent on file" },
-  { clause: "incident_reporting_window", verdict: "fail", note: "Lodged 3 days after incident" },
-  { clause: "worker_screening_check", verdict: "fail", note: "Clearance not recorded" },
-  { clause: "data_retention_period", verdict: "pass", note: "Retained to 2029-06-20" },
+// A real result from the system, used as the proof point.
+const SAMPLE = [
+  { rule: "Consent documentation", pass: false },
+  { rule: "Incident reporting window", pass: false },
+  { rule: "Worker screening check", pass: false },
+  { rule: "Data retention period", pass: true },
 ];
 
 const FIELD =
-  "w-full border border-slate-300 bg-white px-3 py-2.5 text-[13px] text-slate-900 placeholder:text-slate-400 transition-colors focus:border-brand-600 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:border-brand-400";
-const LABEL = "eyebrow mb-1.5 block";
+  "w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-[13.5px] text-slate-900 placeholder:text-slate-400 transition-colors focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/15 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100";
+const LABEL = "mb-1.5 block text-[13px] font-medium text-slate-700 dark:text-slate-300";
 
 export function Login() {
   const { devSignIn, firebaseSignIn } = useAuth();
@@ -71,81 +71,27 @@ export function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-100 dark:bg-slate-950 lg:grid lg:grid-cols-[1.05fr_1fr]">
-      {/* Left: the specimen record. The product's real output is the argument. */}
-      <div className="relative flex flex-col justify-between bg-slate-950 px-8 py-10 sm:px-12 lg:px-14 lg:py-14">
-        <div className="flex items-baseline gap-[3px]">
-          <span className="font-display text-lg font-semibold leading-none tracking-tight text-slate-50">
-            Compliance
-          </span>
-          <span className="font-display text-lg font-normal italic leading-none tracking-tight text-brand-300">
-            Guardian
-          </span>
-        </div>
-
-        <div className="my-12 lg:my-0">
-          <p className="eyebrow !text-brand-400">Specimen record · NDIS AU</p>
-          <h1 className="mt-4 max-w-md font-display text-[30px] font-normal leading-[1.18] text-slate-50 sm:text-[36px]">
-            Every finding cites the clause
-            <span className="text-brand-300"> it came from.</span>
-          </h1>
-          <p className="mt-4 max-w-sm text-[13px] leading-relaxed text-slate-400">
-            Upload a service record. Findings are returned against the NDIS
-            ruleset, scored, and written to an append-only register you can hand
-            an auditor.
-          </p>
-
-          {/* The specimen table: a real extract, not a marketing graphic. */}
-          <div className="mt-9 max-w-md border-t border-slate-800">
-            {SPECIMEN.map((row) => (
-              <div
-                key={row.clause}
-                className="flex items-baseline justify-between gap-4 border-b border-slate-800/70 py-2.5"
-              >
-                <div className="min-w-0">
-                  <p className="font-mono-num truncate text-[11.5px] text-slate-300">
-                    {row.clause}
-                  </p>
-                  <p className="mt-0.5 truncate text-[11px] text-slate-500">{row.note}</p>
-                </div>
-                <span
-                  className={cn(
-                    "shrink-0 border px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.1em]",
-                    row.verdict === "fail"
-                      ? "border-[#C97664]/40 text-[#D98878]"
-                      : "border-brand-400/40 text-brand-300",
-                  )}
-                >
-                  {row.verdict}
-                </span>
-              </div>
-            ))}
-            <div className="flex items-baseline justify-between pt-3.5">
-              <span className="eyebrow !text-slate-500">Score</span>
-              <span className="font-mono-num text-[13px] font-semibold text-[#D98878]">
-                95 / 100 · Escalated
-              </span>
+    <div className="min-h-screen bg-white dark:bg-slate-950 lg:grid lg:grid-cols-2">
+      {/* Form side */}
+      <div className="flex items-center justify-center px-6 py-12 sm:px-10 lg:px-14">
+        <div className="w-full max-w-[360px]">
+          <div className="mb-8 flex items-center gap-2.5">
+            <div className="grid h-8 w-8 place-items-center rounded-lg bg-brand-600 text-white">
+              <ShieldCheck size={17} strokeWidth={2.5} />
             </div>
+            <span className="text-[15px] font-bold tracking-tight text-slate-900 dark:text-slate-50">
+              ComplianceGuardian
+            </span>
           </div>
-        </div>
 
-        <p className="eyebrow !text-slate-600">
-          Append-only audit trail · Rule version pinned to every decision
-        </p>
-      </div>
-
-      {/* Right: the form. */}
-      <div className="flex flex-col justify-center px-6 py-12 sm:px-10 lg:px-14">
-        <div className="mx-auto w-full max-w-[340px]">
           {AUTH_MODE === "dev" ? (
-            <div className="space-y-6">
+            <div className="space-y-5">
               <div>
-                <p className="eyebrow">Local access</p>
-                <h2 className="mt-2 font-display text-[26px] font-normal leading-tight text-slate-900 dark:text-slate-50">
+                <h1 className="text-[24px] font-bold tracking-tight text-slate-900 dark:text-slate-50">
                   Sign in to explore
-                </h2>
-                <p className="mt-2 text-[13px] leading-relaxed text-slate-500 dark:text-slate-400">
-                  Development sign-in. Pick a tenant and role — no password.
+                </h1>
+                <p className="mt-1.5 text-[13.5px] text-slate-500 dark:text-slate-400">
+                  Development sign-in — pick a tenant and role, no password needed.
                 </p>
               </div>
 
@@ -166,18 +112,17 @@ export function Login() {
 
               <div>
                 <span className={LABEL}>Role</span>
-                <div className="grid grid-cols-3 border border-slate-300 dark:border-slate-700">
-                  {ROLES.map((r, i) => (
+                <div className="grid grid-cols-3 gap-1 rounded-lg bg-slate-100 p-1 dark:bg-slate-800">
+                  {ROLES.map((r) => (
                     <button
                       key={r.id}
                       type="button"
                       onClick={() => setRole(r.id)}
                       className={cn(
-                        "py-2 text-[12px] font-medium transition-colors",
-                        i > 0 && "border-l border-slate-300 dark:border-slate-700",
+                        "rounded-md py-1.5 text-[12.5px] font-medium transition-colors",
                         role === r.id
-                          ? "bg-brand-600 text-white"
-                          : "text-slate-500 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-900",
+                          ? "bg-white text-brand-700 shadow-soft dark:bg-slate-700 dark:text-brand-300"
+                          : "text-slate-500 hover:text-slate-800 dark:text-slate-400",
                       )}
                     >
                       {r.label}
@@ -191,16 +136,15 @@ export function Login() {
               </Button>
             </div>
           ) : (
-            <form onSubmit={handleFirebase} className="space-y-5">
-              <div>
-                <p className="eyebrow">{mode === "signin" ? "Registered access" : "New provider"}</p>
-                <h2 className="mt-2 font-display text-[26px] font-normal leading-tight text-slate-900 dark:text-slate-50">
-                  {mode === "signin" ? "Sign in" : "Open your register"}
-                </h2>
-                <p className="mt-2 text-[13px] leading-relaxed text-slate-500 dark:text-slate-400">
+            <form onSubmit={handleFirebase} className="space-y-4">
+              <div className="mb-6">
+                <h1 className="text-[24px] font-bold tracking-tight text-slate-900 dark:text-slate-50">
+                  {mode === "signin" ? "Welcome back" : "Create your account"}
+                </h1>
+                <p className="mt-1.5 text-[13.5px] text-slate-500 dark:text-slate-400">
                   {mode === "signin"
-                    ? "Use your organisation credentials."
-                    : "Set up your NDIS compliance workspace in under a minute."}
+                    ? "Sign in to your compliance workspace."
+                    : "Set up your NDIS workspace in under a minute."}
                 </p>
               </div>
 
@@ -237,7 +181,13 @@ export function Login() {
                 />
               </label>
 
-              <Button type="submit" loading={busy} size="lg" className="w-full">
+              <Button
+                type="submit"
+                loading={busy}
+                size="lg"
+                className="!mt-5 w-full"
+                icon={!busy ? <ArrowRight size={15} /> : undefined}
+              >
                 {mode === "signin" ? "Sign in" : "Create account"}
               </Button>
 
@@ -247,35 +197,67 @@ export function Login() {
                   setMode(mode === "signin" ? "signup" : "signin");
                   setError(null);
                 }}
-                className="w-full text-center text-[12.5px] text-slate-500 underline decoration-slate-300 underline-offset-[3px] transition-colors hover:text-brand-700 dark:text-slate-400 dark:decoration-slate-700 dark:hover:text-brand-300"
+                className="w-full pt-1 text-center text-[13px] text-slate-500 transition-colors hover:text-brand-700 dark:text-slate-400"
               >
-                {mode === "signin"
-                  ? "New here? Open a register"
-                  : "Already registered? Sign in"}
+                {mode === "signin" ? (
+                  <>
+                    New here? <span className="font-medium text-brand-600">Create an account</span>
+                  </>
+                ) : (
+                  <>
+                    Already have an account?{" "}
+                    <span className="font-medium text-brand-600">Sign in</span>
+                  </>
+                )}
               </button>
             </form>
           )}
 
           {error && (
-            <p className="mt-5 border-l-2 border-oxide pl-3 text-[12.5px] leading-relaxed text-oxide dark:text-[#D98878]">
+            <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-[13px] text-status-critical dark:border-red-900 dark:bg-red-950/30 dark:text-red-400">
               {error}
-            </p>
+            </div>
           )}
+        </div>
+      </div>
 
-          {/* Anchors the column and states the offer — the reason a provider
-              arriving from outreach would sign up at all. */}
-          <dl className="mt-10 border-t border-slate-300 pt-5 dark:border-slate-800">
-            {[
-              ["First audit", "Free — no card required"],
-              ["Turnaround", "Minutes, not weeks"],
-              ["Ruleset", "NDIS Practice Standards (AU)"],
-            ].map(([term, detail]) => (
-              <div key={term} className="flex items-baseline justify-between gap-4 py-1.5">
-                <dt className="eyebrow">{term}</dt>
-                <dd className="text-[12px] text-slate-600 dark:text-slate-400">{detail}</dd>
-              </div>
-            ))}
-          </dl>
+      {/* Proof side */}
+      <div className="hidden items-center justify-center border-l border-slate-200 bg-slate-50 px-14 dark:border-slate-800 dark:bg-slate-900 lg:flex">
+        <div className="w-full max-w-[380px]">
+          <h2 className="text-[22px] font-bold leading-snug tracking-tight text-slate-900 dark:text-slate-50">
+            Compliance checks in minutes, not weeks.
+          </h2>
+          <p className="mt-2.5 text-[13.5px] leading-relaxed text-slate-500 dark:text-slate-400">
+            Upload a service record. Every finding cites the exact rule behind it, and
+            lands in an audit trail you can hand to an assessor.
+          </p>
+
+          <div className="mt-7 rounded-xl border border-slate-200 bg-white p-4 shadow-soft dark:border-slate-800 dark:bg-slate-950">
+            <div className="mb-3 flex items-center justify-between">
+              <span className="text-[12.5px] font-semibold text-slate-700 dark:text-slate-300">
+                Sample result
+              </span>
+              <span className="rounded-md bg-red-50 px-2 py-0.5 text-[11.5px] font-semibold text-status-critical dark:bg-red-950/40 dark:text-red-400">
+                Risk 95 · Escalated
+              </span>
+            </div>
+            <ul className="space-y-2">
+              {SAMPLE.map((s) => (
+                <li key={s.rule} className="flex items-center gap-2 text-[13px]">
+                  {s.pass ? (
+                    <CheckCircle2 size={14} className="shrink-0 text-status-good" strokeWidth={2.25} />
+                  ) : (
+                    <XCircle size={14} className="shrink-0 text-status-critical" strokeWidth={2.25} />
+                  )}
+                  <span className="text-slate-600 dark:text-slate-400">{s.rule}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <p className="mt-5 text-[12.5px] text-slate-400 dark:text-slate-500">
+            First audit free · No card required
+          </p>
         </div>
       </div>
     </div>

@@ -42,7 +42,7 @@ const STYLES: Record<ToastKind, string> = {
   error:
     "border-status-critical/25 bg-white dark:bg-slate-900 [&_svg]:text-status-critical",
   warning:
-    "border-status-warning/30 bg-white dark:bg-slate-900 [&_svg]:text-brass",
+    "border-status-warning/30 bg-white dark:bg-slate-900 [&_svg]:text-status-warning",
   info: "border-brand-500/25 bg-white dark:bg-slate-900 [&_svg]:text-brand-600 dark:[&_svg]:text-brand-400",
 };
 
