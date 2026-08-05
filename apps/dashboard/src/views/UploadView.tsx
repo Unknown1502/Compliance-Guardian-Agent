@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   ArrowUpRight,
   Circle,
+  ShieldOff,
 } from "lucide-react";
 import { uploadDocument, triggerCheck, ApiError } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
@@ -209,6 +210,24 @@ export function UploadView() {
               className="overflow-hidden"
             >
               <div className="flex items-center gap-2">
+                {/* Honest placeholder: no virus scanning happens in this
+                    pipeline today. Shown so the roadmap is visible, never
+                    implying it ran — permanently dashed/grey, distinct from
+                    the real animated steps to its right. */}
+                <div className="flex flex-1 items-center gap-2">
+                  <div className="flex flex-col items-center gap-1.5">
+                    <div className="grid h-7 w-7 place-items-center rounded-full border-2 border-dashed border-slate-300 text-slate-300 dark:border-slate-700 dark:text-slate-600">
+                      <ShieldOff size={12} />
+                    </div>
+                    <span className="hidden text-center text-[11px] font-medium text-slate-400 dark:text-slate-600 sm:block">
+                      Virus scan
+                      <span className="block text-[9.5px] font-normal uppercase tracking-wide">
+                        Coming soon
+                      </span>
+                    </span>
+                  </div>
+                  <div className="h-0.5 flex-1 rounded-full bg-slate-100 dark:bg-slate-800" />
+                </div>
                 {STEPS.map((s, i) => {
                   const st = stepState(s.key, stage);
                   return (

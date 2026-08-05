@@ -1,0 +1,24 @@
+DATA PROCESSING RECORD
+Organization: Al Marsa Logistics LLC
+Data Subject Type: Customer (delivery contact details)
+
+CONSENT
+Consent Record: No documented consent on file for this customer. Contact
+details were collected during a phone order and never confirmed in writing.
+
+SECURITY MEASURES
+Security Measures Record: (not documented — no written record of technical
+or organizational safeguards for this data category)
+
+DATA BREACH
+Breach Identified Date: 2026-05-02 09:10
+Breach Notified Date: 2026-05-09 14:00
+Notes: A misconfigured storage bucket exposed customer contact details for
+approximately 6 days before IT discovered it during an unrelated audit.
+UAE Data Office was notified once legal counsel was engaged.
+
+DPO STATUS
+DPO Appointed Or Not Required: (not stated)
+
+Recorded by: H. Al-Suwaidi, Operations
+Date: 2026-05-09

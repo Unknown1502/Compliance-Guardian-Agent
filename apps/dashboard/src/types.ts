@@ -41,6 +41,8 @@ export interface AuditEvent {
   tenant_id: string;
   actor: string;
   action: string;
+  before_state: string | null;
+  after_state: string | null;
   created_at: string;
 }
 

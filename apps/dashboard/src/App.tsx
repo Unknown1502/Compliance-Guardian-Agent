@@ -1,10 +1,11 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { ThemeProvider } from "./context/ThemeContext";
 import { ToastProvider } from "./context/ToastContext";
 import { Login } from "./components/Login";
 import { Layout } from "./components/Layout";
+import { LandingPage } from "./views/LandingPage";
 import { TaskQueue } from "./views/TaskQueue";
 import { UploadView } from "./views/UploadView";
 import { CheckDetail } from "./views/CheckDetail";
@@ -14,7 +15,7 @@ import { BillingView } from "./views/BillingView";
 
 function SplashScreen() {
   return (
-    <div className="grid min-h-screen place-items-center bg-slate-50 dark:bg-slate-950">
+    <div className="grid min-h-screen place-items-center bg-bg dark:bg-slate-950">
       <motion.div
         initial={{ opacity: 0, scale: 0.9 }}
         animate={{ opacity: 1, scale: 1 }}
@@ -22,7 +23,7 @@ function SplashScreen() {
         className="flex flex-col items-center gap-3"
       >
         <div className="flex items-baseline gap-[3px]">
-          <span className="text-[17px] font-bold tracking-tight text-slate-900 dark:text-slate-50">
+          <span className="text-[17px] font-bold tracking-tight text-ink dark:text-slate-50">
             ComplianceGuardian
           </span>
         </div>
@@ -39,7 +40,18 @@ function SplashScreen() {
 function Gate() {
   const { session, loading } = useAuth();
   if (loading) return <SplashScreen />;
-  if (!session) return <Login />;
+
+  if (!session) {
+    return (
+      <Routes>
+        <Route path="/" element={<LandingPage />} />
+        <Route path="/login" element={<Login initialMode="signin" />} />
+        <Route path="/signup" element={<Login initialMode="signup" />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    );
+  }
+
   return (
     <Routes>
       <Route element={<Layout />}>
@@ -50,6 +62,7 @@ function Gate() {
         <Route path="reports" element={<ReportsView />} />
         <Route path="billing" element={<BillingView />} />
       </Route>
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }

@@ -1,25 +1,21 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { motion } from "framer-motion";
 import {
   ArrowLeft,
   CheckCircle2,
   XCircle,
   User,
-  Hash,
-  FileSearch,
-  BookMarked,
+  FileText,
+  Loader2,
 } from "lucide-react";
-import { getCheck, decideCheck, ApiError } from "../api/client";
+import { getCheck, getDocument, decideCheck, ApiError } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useToast } from "../context/ToastContext";
 import { DecisionBadge, VerdictPill } from "../components/Badges";
-import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
-import { RiskGauge } from "../components/ui/RiskGauge";
 import { CardSkeleton } from "../components/ui/Skeleton";
-import type { ComplianceCheck } from "../types";
+import type { ComplianceCheck, DocumentRecord } from "../types";
 
 const VERDICT_BAR: Record<string, string> = {
   pass: "bg-status-good",
@@ -27,12 +23,16 @@ const VERDICT_BAR: Record<string, string> = {
   uncertain: "bg-status-warning",
 };
 
+const RISK_TONE = (score: number) =>
+  score >= 60 ? "text-status-critical" : score >= 30 ? "text-status-warning" : "text-status-good";
+
 export function CheckDetail() {
   const { checkId } = useParams<{ checkId: string }>();
   const { session } = useAuth();
   const navigate = useNavigate();
   const toast = useToast();
   const [check, setCheck] = useState<ComplianceCheck | null>(null);
+  const [doc, setDoc] = useState<DocumentRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -41,7 +41,9 @@ export function CheckDetail() {
   const load = async () => {
     if (!session || !checkId) return;
     try {
-      setCheck(await getCheck(session, checkId));
+      const c = await getCheck(session, checkId);
+      setCheck(c);
+      getDocument(session, c.document_id).then(setDoc).catch(() => {});
     } catch (err) {
       setError((err as Error).message);
     }
@@ -81,7 +83,7 @@ export function CheckDetail() {
     }
   };
 
-  if (error && !check) return <p className="text-sm text-status-critical">{error}</p>;
+  if (error && !check) return <p className="text-[13.5px] text-status-critical">{error}</p>;
   if (!check) {
     return (
       <div className="space-y-6">
@@ -96,145 +98,160 @@ export function CheckDetail() {
     check.decision === "escalated";
 
   return (
-    <div className="space-y-6">
-      <motion.button
-        whileHover={{ x: -2 }}
-        onClick={() => navigate(-1)}
-        className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
-      >
-        <ArrowLeft size={14} />
-        Back
-      </motion.button>
-
-      <Card>
-        <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0 space-y-1.5">
+    <div className="-mx-5 -mt-2 flex h-[calc(100vh-64px)] flex-col sm:-mx-8 lg:-mx-10">
+      {/* PR-style header bar: identity + verdict + risk, always visible. */}
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-line bg-surface px-5 py-3.5 sm:px-8 lg:px-10">
+        <div className="flex items-center gap-3 min-w-0">
+          <button
+            onClick={() => navigate(-1)}
+            className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-ink-2 transition-colors hover:bg-surface-2"
+          >
+            <ArrowLeft size={15} />
+          </button>
+          <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-100">
-                Compliance check
-              </h2>
+              <span className="font-mono-num truncate text-[13px] font-semibold text-ink">
+                {check.document_id}
+              </span>
               <DecisionBadge decision={check.decision} />
             </div>
-            <p className="flex items-center gap-1.5 font-mono-num text-xs text-slate-400 dark:text-slate-500">
-              <Hash size={11} />
-              {check.check_id}
-            </p>
-            <p className="font-mono-num text-xs text-slate-400 dark:text-slate-500">
-              document: {check.document_id} · ruleset v{check.rule_set_version}
+            <p className="font-mono-num text-[11.5px] text-muted">
+              ruleset v{check.rule_set_version} · check {check.check_id.slice(0, 8)}
             </p>
           </div>
-          <RiskGauge score={check.risk_score} />
+        </div>
+        <div className="flex items-center gap-2">
+          <span className={`font-mono-num text-[22px] font-bold leading-none ${RISK_TONE(check.risk_score)}`}>
+            {check.risk_score}
+          </span>
+          <span className="text-[11.5px] text-muted">/ 100 risk</span>
+        </div>
+      </div>
+
+      {/* Split body: document (left) | findings + actions (right) — the GitHub PR pattern. */}
+      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+        {/* Left: the artifact under review — extracted data, since that's what was actually evaluated. */}
+        <div className="min-h-0 flex-1 overflow-y-auto border-b border-line bg-surface-2 lg:border-b-0 lg:border-r">
+          <div className="border-b border-line bg-surface px-5 py-2.5 sm:px-8">
+            <span className="eyebrow inline-flex items-center gap-1.5">
+              <FileText size={12} />
+              Extracted data
+            </span>
+          </div>
+          <div className="px-5 py-5 sm:px-8">
+            {!doc ? (
+              <div className="flex items-center gap-2 text-[13px] text-muted">
+                <Loader2 size={13} className="animate-spin" />
+                Loading document…
+              </div>
+            ) : (
+              <dl className="space-y-4">
+                {Object.entries(doc.extracted_fields).map(([field, value]) => (
+                  <div key={field} className="border-b border-line pb-3 last:border-0">
+                    <dt className="font-mono-num text-[11.5px] font-medium text-muted">{field}</dt>
+                    <dd className="mt-1 whitespace-pre-wrap text-[13.5px] leading-relaxed text-ink">
+                      {value === null || value === "" ? (
+                        <span className="italic text-muted">not present</span>
+                      ) : (
+                        String(value)
+                      )}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            )}
+          </div>
         </div>
 
-        <div className="mt-5 rounded-xl bg-slate-50 p-4 dark:bg-slate-800/50">
-          <h3 className="mb-1 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
-            <FileSearch size={12} />
-            Justification
-          </h3>
-          <p className="text-sm text-slate-700 dark:text-slate-300">{check.justification}</p>
-        </div>
-
-        {check.citations.length > 0 && (
-          <div className="mt-4">
-            <h3 className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
-              <BookMarked size={12} />
-              Cited rules
-            </h3>
-            <div className="flex flex-wrap gap-1.5">
-              {check.citations.map((c) => (
-                <span
-                  key={c}
-                  className="rounded-md bg-slate-100 px-2 py-0.5 font-mono-num text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300"
-                >
-                  {c}
-                </span>
-              ))}
+        {/* Right: findings + reviewer actions — the "review comments" side. */}
+        <div className="flex min-h-0 w-full flex-col lg:w-[440px] lg:shrink-0">
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="border-b border-line bg-surface px-5 py-2.5">
+              <span className="eyebrow">Findings · {check.rule_verdicts.length} rules evaluated</span>
             </div>
+            <ul className="divide-y divide-line">
+              {check.rule_verdicts.map((v) => (
+                <li key={v.rule_id} className="px-5 py-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-mono-num text-[12.5px] font-medium text-ink">
+                      {v.rule_id}
+                    </span>
+                    <VerdictPill status={v.status} />
+                  </div>
+                  <p className="mt-1.5 text-[13px] leading-relaxed text-ink-2">{v.explanation}</p>
+                  <div className="mt-2 flex items-center gap-2">
+                    <div className="h-1 w-20 overflow-hidden rounded-full bg-surface-2">
+                      <div
+                        className={`h-full ${VERDICT_BAR[v.status]}`}
+                        style={{ width: `${v.confidence * 100}%` }}
+                      />
+                    </div>
+                    <span className="font-mono-num text-[11px] text-muted">
+                      {(v.confidence * 100).toFixed(0)}% confidence
+                    </span>
+                  </div>
+                  {v.triggering_data_point && (
+                    <p className="font-mono-num mt-1.5 text-[11px] text-muted">
+                      {v.triggering_data_point}
+                    </p>
+                  )}
+                </li>
+              ))}
+            </ul>
+
+            <div className="border-t border-line px-5 py-4">
+              <span className="eyebrow">Overall justification</span>
+              <p className="mt-1.5 text-[13px] leading-relaxed text-ink-2">{check.justification}</p>
+            </div>
+
+            {check.reviewer_id && (
+              <div className="flex items-center gap-1.5 border-t border-line px-5 py-3 text-[12.5px] text-ink-2">
+                <User size={13} />
+                Reviewed by <span className="font-mono-num">{check.reviewer_id}</span>
+              </div>
+            )}
           </div>
-        )}
 
-        {check.reviewer_id && (
-          <p className="mt-4 flex items-center gap-1.5 text-sm text-slate-500 dark:text-slate-400">
-            <User size={13} />
-            Reviewed by <span className="font-mono-num">{check.reviewer_id}</span>
-          </p>
-        )}
-      </Card>
+          {/* Actions pinned at the bottom of the right rail, like a PR's merge box. */}
+          <div className="border-t border-line bg-surface px-5 py-4">
+            {notice && (
+              <p className="mb-3 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-[12.5px] text-brand-800">
+                {notice}
+              </p>
+            )}
+            {error && <p className="mb-3 text-[12.5px] text-status-critical">{error}</p>}
 
-      <Card padded={false}>
-        <div className="border-b border-slate-100 px-5 py-3.5 dark:border-slate-800">
-          <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">
-            Per-rule verdicts
-          </h3>
-        </div>
-        <ul className="divide-y divide-slate-100 dark:divide-slate-800">
-          {check.rule_verdicts.map((v, i) => (
-            <motion.li
-              key={v.rule_id}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3, delay: i * 0.05 }}
-              className="px-5 py-3.5"
-            >
-              <div className="flex items-center justify-between gap-3">
-                <span className="font-mono-num text-sm text-slate-700 dark:text-slate-300">
-                  {v.rule_id}
-                </span>
-                <VerdictPill status={v.status} />
+            {canReview ? (
+              <div className="flex gap-2.5">
+                <Button
+                  variant="success"
+                  size="lg"
+                  className="flex-1"
+                  onClick={() => setConfirmAction("approve")}
+                >
+                  <CheckCircle2 size={15} className="mr-1" />
+                  Approve
+                </Button>
+                <Button
+                  variant="danger"
+                  size="lg"
+                  className="flex-1"
+                  onClick={() => setConfirmAction("reject")}
+                >
+                  <XCircle size={15} className="mr-1" />
+                  Reject
+                </Button>
               </div>
-              <p className="mt-1.5 text-sm text-slate-600 dark:text-slate-400">{v.explanation}</p>
-              <div className="mt-2 flex items-center gap-2">
-                <div className="h-1.5 w-28 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-                  <motion.div
-                    initial={{ width: 0 }}
-                    animate={{ width: `${v.confidence * 100}%` }}
-                    transition={{ duration: 0.6, delay: 0.15 + i * 0.05 }}
-                    className={`h-full ${VERDICT_BAR[v.status]}`}
-                  />
-                </div>
-                <span className="font-mono-num text-xs text-slate-400 dark:text-slate-500">
-                  {(v.confidence * 100).toFixed(0)}% confidence
-                </span>
-              </div>
-              {v.triggering_data_point && (
-                <p className="mt-1.5 font-mono-num text-xs text-slate-400 dark:text-slate-600">
-                  {v.triggering_data_point}
+            ) : (
+              check.decision === "escalated" && (
+                <p className="text-[12.5px] text-muted">
+                  Awaiting a reviewer. Sign in with a reviewer role to action this.
                 </p>
-              )}
-            </motion.li>
-          ))}
-        </ul>
-      </Card>
-
-      {notice && (
-        <motion.div
-          initial={{ opacity: 0, y: -6 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="rounded-xl border border-brand-200 bg-brand-50 p-3 text-sm text-brand-800 dark:border-brand-900 dark:bg-brand-950/30 dark:text-brand-300"
-        >
-          {notice}
-        </motion.div>
-      )}
-      {error && <p className="text-sm text-status-critical">{error}</p>}
-
-      {canReview ? (
-        <div className="flex gap-3">
-          <Button variant="success" size="lg" onClick={() => setConfirmAction("approve")}>
-            <CheckCircle2 size={15} className="mr-1" />
-            Approve
-          </Button>
-          <Button variant="danger" size="lg" onClick={() => setConfirmAction("reject")}>
-            <XCircle size={15} className="mr-1" />
-            Reject
-          </Button>
+              )
+            )}
+          </div>
         </div>
-      ) : (
-        check.decision === "escalated" && (
-          <p className="text-sm text-slate-500 dark:text-slate-400">
-            This item is awaiting a reviewer. Sign in with a reviewer role to action it.
-          </p>
-        )
-      )}
+      </div>
 
       <ConfirmDialog
         open={confirmAction !== null}

@@ -30,11 +30,11 @@ const FIELD =
   "w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-[13.5px] text-slate-900 placeholder:text-slate-400 transition-colors focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/15 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100";
 const LABEL = "mb-1.5 block text-[13px] font-medium text-slate-700 dark:text-slate-300";
 
-export function Login() {
+export function Login({ initialMode = "signin" }: { initialMode?: "signin" | "signup" }) {
   const { devSignIn, firebaseSignIn } = useAuth();
   const [tenantId, setTenantId] = useState(DEMO_TENANTS[0].id);
   const [role, setRole] = useState<Role>("owner");
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [mode, setMode] = useState<"signin" | "signup">(initialMode);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [businessName, setBusinessName] = useState("");

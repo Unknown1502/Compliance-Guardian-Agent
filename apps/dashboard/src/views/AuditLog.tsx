@@ -1,12 +1,110 @@
 import { useEffect, useMemo, useState } from "react";
-import { motion } from "framer-motion";
-import { Search, ScrollText, RefreshCw } from "lucide-react";
+import { Search, ScrollText, RefreshCw, ChevronRight, Bot, User as UserIcon } from "lucide-react";
 import { getAuditLogs } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import type { AuditEvent } from "../types";
-import { Card, PageHeading } from "../components/ui/Card";
-import { TableSkeleton } from "../components/ui/Skeleton";
+import { PageHeading } from "../components/ui/Card";
 import { EmptyState } from "../components/ui/EmptyState";
+import { cn } from "../lib/cn";
+
+const ACTION_TONE: Record<string, string> = {
+  escalated: "bg-status-warning",
+  rejected: "bg-status-critical",
+  failed: "bg-status-critical",
+  approved: "bg-status-good",
+  purchased: "bg-status-good",
+  subscribed: "bg-status-good",
+};
+
+function toneForAction(action: string): string {
+  for (const [key, cls] of Object.entries(ACTION_TONE)) {
+    if (action.includes(key)) return cls;
+  }
+  return "bg-audit";
+}
+
+function isAgent(actor: string) {
+  return /agent|orchestrator|webhook|-service$/i.test(actor);
+}
+
+function prettyJson(raw: string | null): string | null {
+  if (!raw || raw === "null") return null;
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2);
+  } catch {
+    return raw;
+  }
+}
+
+function EventRow({ e }: { e: AuditEvent }) {
+  const [open, setOpen] = useState(false);
+  const before = prettyJson(e.before_state);
+  const after = prettyJson(e.after_state);
+  const hasMeta = before || after;
+
+  return (
+    <li className="relative pl-9">
+      {/* Timeline rail + node — the commit-history visual language. */}
+      <span className="absolute left-[7px] top-0 h-full w-px bg-line" aria-hidden="true" />
+      <span
+        className={cn(
+          "absolute left-0 top-[18px] h-3.5 w-3.5 rounded-full ring-4 ring-bg dark:ring-slate-950",
+          toneForAction(e.action),
+        )}
+        aria-hidden="true"
+      />
+
+      <button
+        type="button"
+        onClick={() => hasMeta && setOpen((o) => !o)}
+        className={cn(
+          "flex w-full items-start gap-3 rounded-lg py-3 pr-3 text-left transition-colors",
+          hasMeta && "hover:bg-surface-2",
+        )}
+      >
+        <div className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-md bg-surface-2 text-ink-2">
+          {isAgent(e.actor) ? <Bot size={12.5} /> : <UserIcon size={12.5} />}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <span className="font-mono-num text-[13px] font-semibold text-ink">{e.actor}</span>
+            <span className="text-[12.5px] text-muted">{e.action}</span>
+          </div>
+          <p className="font-mono-num mt-0.5 text-[11.5px] text-muted">
+            {e.created_at} · {e.event_id.slice(0, 8)}
+          </p>
+        </div>
+        {hasMeta && (
+          <ChevronRight
+            size={14}
+            className={cn("mt-1 shrink-0 text-muted transition-transform", open && "rotate-90")}
+          />
+        )}
+      </button>
+
+      {hasMeta && open && (
+        <div className="mb-3 ml-9 grid gap-3 rounded-lg border border-line bg-surface-2 p-3 sm:grid-cols-2">
+          {before && (
+            <div>
+              <span className="eyebrow">Before</span>
+              <pre className="font-mono-num mt-1.5 max-h-64 overflow-auto whitespace-pre-wrap break-all text-[11px] leading-relaxed text-ink-2">
+                {before}
+              </pre>
+            </div>
+          )}
+          {after && (
+            <div>
+              <span className="eyebrow">After</span>
+              <pre className="font-mono-num mt-1.5 max-h-64 overflow-auto whitespace-pre-wrap break-all text-[11px] leading-relaxed text-ink-2">
+                {after}
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
+    </li>
+  );
+}
 
 export function AuditLog() {
   const { session } = useAuth();
@@ -38,16 +136,15 @@ export function AuditLog() {
   }, [events, query]);
 
   return (
-    <div className="space-y-6">
+    <div>
       <PageHeading
-        kind="Provenance"
         title="Audit log"
-        subtitle="Immutable, append-only record of every decision."
+        subtitle="Immutable, append-only record of every decision — human and AI."
         action={
           <button
             onClick={load}
             disabled={loading}
-            className="inline-flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-[0.06em] text-slate-500 transition-colors hover:text-brand-700 disabled:opacity-50 dark:text-slate-400 dark:hover:text-brand-300"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-[12.5px] font-medium text-ink-2 transition-colors hover:bg-surface-2 disabled:opacity-50"
           >
             <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
             Refresh
@@ -55,68 +152,46 @@ export function AuditLog() {
         }
       />
 
-      <div className="relative max-w-sm">
-        <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+      <div className="relative mb-6 max-w-sm">
+        <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Filter by actor, action, or event id…"
-          className="w-full rounded-xl border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm shadow-sm focus:border-brand-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+          className="w-full rounded-lg border border-line bg-surface py-2 pl-9 pr-3 text-[13.5px] focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/15"
         />
       </div>
 
-      {error && <p className="text-sm text-status-critical">{error}</p>}
+      {error && <p className="mb-4 text-[13px] text-status-critical">{error}</p>}
 
-      <Card padded={false} className="overflow-hidden">
+      <div className="rounded-xl border border-line bg-surface p-5">
         {loading ? (
-          <TableSkeleton rows={7} cols={3} />
+          <div className="space-y-4">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-3">
+                <div className="h-6 w-6 animate-pulse rounded-md bg-surface-2" />
+                <div className="h-3.5 flex-1 animate-pulse rounded bg-surface-2" style={{ maxWidth: 320 }} />
+              </div>
+            ))}
+          </div>
         ) : filtered.length === 0 ? (
           <EmptyState
             icon={ScrollText}
             title={events.length === 0 ? "No audit events yet" : "No matches"}
             description={
               events.length === 0
-                ? "Actions taken across the tenant will appear here as they happen."
+                ? "Actions taken across the tenant — by people and by agents — appear here as they happen."
                 : "Try a different search term."
             }
           />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-slate-50 text-left text-slate-500 dark:bg-slate-900/60 dark:text-slate-400">
-                <tr>
-                  <th className="px-5 py-2.5 font-medium">Time (UTC)</th>
-                  <th className="px-5 py-2.5 font-medium">Actor</th>
-                  <th className="px-5 py-2.5 font-medium">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((e, i) => (
-                  <motion.tr
-                    key={e.event_id}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ duration: 0.25, delay: Math.min(i * 0.02, 0.3) }}
-                    className="border-t border-slate-100 hover:bg-slate-50/80 dark:border-slate-800 dark:hover:bg-slate-800/40"
-                  >
-                    <td className="px-5 py-2.5 font-mono-num text-slate-500 dark:text-slate-400">
-                      {e.created_at}
-                    </td>
-                    <td className="px-5 py-2.5 font-mono-num text-slate-700 dark:text-slate-300">
-                      {e.actor}
-                    </td>
-                    <td className="px-5 py-2.5">
-                      <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                        {e.action}
-                      </span>
-                    </td>
-                  </motion.tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <ul>
+            {filtered.map((e) => (
+              <EventRow key={e.event_id} e={e} />
+            ))}
+          </ul>
         )}
-      </Card>
+      </div>
     </div>
   );
 }

@@ -464,6 +464,8 @@ def get_audit_logs(
     where = " AND ".join(clauses)
     query = (
         f"SELECT event_id, tenant_id, actor, action, "
+        f"TO_JSON_STRING(before_state) AS before_state, "
+        f"TO_JSON_STRING(after_state) AS after_state, "
         f"CAST(created_at AS STRING) AS created_at "
         f"FROM `{project_id()}.{audit_dataset()}.{audit_table()}` "
         f"WHERE {where} ORDER BY created_at DESC LIMIT {limit}"

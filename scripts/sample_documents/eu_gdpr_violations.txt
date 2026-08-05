@@ -1,0 +1,25 @@
+DATA PROCESSING RECORD
+Organization: Nordwind Retail GmbH
+Data Subject: EU customer newsletter list
+
+LAWFUL BASIS
+Lawful Basis Record: (none on file — marketing emails have been sent to
+this list for over a year with no recorded opt-in or other lawful basis)
+
+DATA BREACH
+Breach Identified Date: 2026-04-11 08:00
+Authority Notified Date: 2026-04-20 10:00
+High Risk To Individuals: true
+Individual Notified Date: (not sent — customers were never informed)
+Notes: A third-party mailing vendor's database was compromised, exposing
+names, emails, and purchase history for the newsletter list.
+
+DPO STATUS
+Dpo Appointed Or Not Required: (not stated)
+
+DATA SUBJECT REQUEST
+Subject Request Date: 2026-03-01
+Subject Response Date: 2026-04-15
+
+Recorded by: T. Lindqvist, Compliance
+Date: 2026-04-20
