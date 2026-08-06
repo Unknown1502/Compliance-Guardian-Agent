@@ -342,3 +342,99 @@ class TestTeam:
         assert r.status_code == 404
         # The cross-tenant user must still exist.
         assert "u-theirs" in fake.repo.users
+
+
+class TestApiKeyAuth:
+    """X-API-Key is an alternative credential, so it must carry exactly the
+    same tenant-isolation guarantees as the Firebase JWT path."""
+
+    def _register(self, monkeypatch, record):
+        """Point auth_middleware at an in-memory key store."""
+        import auth_middleware
+        from api_keys import hash_api_key, looks_like_api_key
+
+        def resolve(plaintext):
+            if not looks_like_api_key(plaintext):
+                return None
+            if record is None or hash_api_key(plaintext) != record["key_hash"]:
+                return None
+            if record.get("revoked"):
+                return None
+            return auth_middleware.AuthContext(
+                uid=f"api_key:{record['key_id']}",
+                tenant_id=record["tenant_id"],
+                role="owner",
+            )
+
+        auth_middleware.set_api_key_resolver(resolve)
+        monkeypatch.setattr(
+            auth_middleware, "_api_key_resolver", resolve, raising=False
+        )
+
+    def test_valid_key_authenticates(self, client, monkeypatch):
+        from api_keys import generate_api_key
+
+        c, _ = client
+        g = generate_api_key()
+        self._register(
+            monkeypatch,
+            {"key_id": "k1", "tenant_id": "tenant-a", "key_hash": g.key_hash},
+        )
+        r = c.get("/api/documents/doc-a", headers={"X-API-Key": g.plaintext})
+        assert r.status_code == 200
+
+    def test_key_is_scoped_to_its_own_tenant(self, client, monkeypatch):
+        from api_keys import generate_api_key
+
+        c, _ = client
+        g = generate_api_key()
+        # Key belongs to tenant-b; doc-a belongs to tenant-a.
+        self._register(
+            monkeypatch,
+            {"key_id": "k1", "tenant_id": "tenant-b", "key_hash": g.key_hash},
+        )
+        r = c.get("/api/documents/doc-a", headers={"X-API-Key": g.plaintext})
+        assert r.status_code == 404  # not found, not leaked
+
+    def test_invalid_key_rejected(self, client, monkeypatch):
+        from api_keys import generate_api_key
+
+        c, _ = client
+        real = generate_api_key()
+        self._register(
+            monkeypatch,
+            {"key_id": "k1", "tenant_id": "tenant-a", "key_hash": real.key_hash},
+        )
+        r = c.get(
+            "/api/documents/doc-a",
+            headers={"X-API-Key": generate_api_key().plaintext},
+        )
+        assert r.status_code == 401
+
+    def test_revoked_key_rejected(self, client, monkeypatch):
+        from api_keys import generate_api_key
+
+        c, _ = client
+        g = generate_api_key()
+        self._register(
+            monkeypatch,
+            {
+                "key_id": "k1",
+                "tenant_id": "tenant-a",
+                "key_hash": g.key_hash,
+                "revoked": True,
+            },
+        )
+        r = c.get("/api/documents/doc-a", headers={"X-API-Key": g.plaintext})
+        assert r.status_code == 401
+
+    def test_malformed_key_rejected(self, client, monkeypatch):
+        c, _ = client
+        self._register(monkeypatch, None)
+        r = c.get("/api/documents/doc-a", headers={"X-API-Key": "totally-bogus"})
+        assert r.status_code == 401
+
+    def test_no_credential_still_401(self, client, monkeypatch):
+        c, _ = client
+        self._register(monkeypatch, None)
+        assert c.get("/api/documents/doc-a").status_code == 401

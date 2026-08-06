@@ -179,3 +179,107 @@ export async function removeTeamMember(session: Session, uid: string): Promise<v
     throw new ApiError(res.status, b.detail ?? res.statusText);
   }
 }
+
+// -- settings: notifications / retention / api keys -------------------------
+
+export interface NotificationSettings {
+  slack_configured: boolean;
+  slack_webhook_masked: string;
+}
+
+export async function getNotificationSettings(session: Session): Promise<NotificationSettings> {
+  return jsonOrThrow(await authedFetch(session, "/api/settings/notifications"));
+}
+
+export async function putNotificationSettings(
+  session: Session,
+  slackWebhookUrl: string,
+): Promise<NotificationSettings> {
+  return jsonOrThrow(
+    await authedFetch(session, "/api/settings/notifications", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slack_webhook_url: slackWebhookUrl }),
+    }),
+  );
+}
+
+export async function testNotification(session: Session): Promise<{ sent: boolean }> {
+  return jsonOrThrow(
+    await authedFetch(session, "/api/settings/notifications/test", { method: "POST" }),
+  );
+}
+
+export interface RetentionSettings {
+  retention_days: number;
+  minimum_days: number;
+  enabled: boolean;
+}
+
+export async function getRetentionSettings(session: Session): Promise<RetentionSettings> {
+  return jsonOrThrow(await authedFetch(session, "/api/settings/retention"));
+}
+
+export async function putRetentionSettings(
+  session: Session,
+  retentionDays: number,
+): Promise<RetentionSettings> {
+  return jsonOrThrow(
+    await authedFetch(session, "/api/settings/retention", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ retention_days: retentionDays }),
+    }),
+  );
+}
+
+export interface RetentionPreview {
+  retention_days: number;
+  cutoff: string | null;
+  considered: number;
+  deleted_count: number;
+  deleted: string[];
+  skipped_reason: string | null;
+  dry_run: boolean;
+}
+
+export async function previewRetention(session: Session): Promise<RetentionPreview> {
+  return jsonOrThrow(
+    await authedFetch(session, "/api/settings/retention/preview", { method: "POST" }),
+  );
+}
+
+export interface ApiKey {
+  key_id: string;
+  name: string;
+  display_prefix: string;
+  created_at: string;
+  last_used_at: string | null;
+  revoked: boolean;
+}
+
+export interface ApiKeyCreated extends ApiKey {
+  plaintext_key: string;
+}
+
+export async function listApiKeys(session: Session): Promise<ApiKey[]> {
+  return jsonOrThrow(await authedFetch(session, "/api/keys"));
+}
+
+export async function createApiKey(session: Session, name: string): Promise<ApiKeyCreated> {
+  return jsonOrThrow(
+    await authedFetch(session, "/api/keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    }),
+  );
+}
+
+export async function revokeApiKey(session: Session, keyId: string): Promise<void> {
+  const res = await authedFetch(session, `/api/keys/${keyId}`, { method: "DELETE" });
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new ApiError(res.status, b.detail ?? res.statusText);
+  }
+}

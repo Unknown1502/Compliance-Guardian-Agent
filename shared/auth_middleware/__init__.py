@@ -123,7 +123,50 @@ class AuthContext:
     email: str | None = None
 
 
+# Resolver injected by the composition root so this module stays free of a
+# Firestore dependency. Signature: (plaintext_key) -> AuthContext | None.
+_api_key_resolver = None
+
+
+def set_api_key_resolver(resolver) -> None:
+    """Register how an X-API-Key header is turned into an AuthContext.
+
+    Kept as an injected callable rather than an import so auth_middleware
+    has no datastore dependency, and so a deployment that never configures
+    a resolver simply cannot authenticate by API key at all.
+    """
+    global _api_key_resolver
+    _api_key_resolver = resolver
+
+
+def _verify_api_key(request: Request) -> AuthContext | None:
+    """Authenticate via X-API-Key, or return None if no key was presented."""
+    presented = request.headers.get("X-API-Key", "").strip()
+    if not presented:
+        return None
+    if _api_key_resolver is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API key authentication is not configured",
+        )
+    ctx = _api_key_resolver(presented)
+    if ctx is None:
+        # Same message for unknown, malformed and revoked keys — telling a
+        # caller which one it was is free reconnaissance.
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key"
+        )
+    return ctx
+
+
 def _verify_bearer_token(request: Request) -> AuthContext:
+    # API key first: if the caller presented one, that is the credential they
+    # intend to use, and falling through to the bearer path would produce a
+    # confusing 'missing bearer token' for a bad key.
+    api_ctx = _verify_api_key(request)
+    if api_ctx is not None:
+        return api_ctx
+
     header = request.headers.get("Authorization", "")
     if not header.startswith("Bearer "):
         raise HTTPException(

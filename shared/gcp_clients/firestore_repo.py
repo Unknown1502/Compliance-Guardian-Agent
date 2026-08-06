@@ -9,11 +9,13 @@ guessing even though IDs are server-generated).
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from google.cloud import firestore
 
 from schema_validators import (
+    ApiKeyRecord,
     CheckDecision,
     ComplianceCheck,
     Document,
@@ -27,6 +29,7 @@ COLLECTION_DOCUMENTS = "documents"
 COLLECTION_CHECKS = "compliance_checks"
 COLLECTION_TASKS = "tasks"
 COLLECTION_USERS = "users"
+COLLECTION_API_KEYS = "api_keys"
 
 
 class TenantMismatchError(PermissionError):
@@ -87,6 +90,90 @@ class FirestoreRepo:
         # own tenant by guessing a uid.
         self.get_user(uid, tenant_id)
         self._db.collection(COLLECTION_USERS).document(uid).delete()
+
+    # -- api keys -----------------------------------------------------------
+
+    def upsert_api_key(self, key: ApiKeyRecord) -> None:
+        self._db.collection(COLLECTION_API_KEYS).document(key.key_id).set(
+            key.model_dump(mode="json")
+        )
+
+    def list_api_keys(self, tenant_id: str, limit: int = 100) -> list[ApiKeyRecord]:
+        q = (
+            self._db.collection(COLLECTION_API_KEYS)
+            .where(filter=firestore.FieldFilter("tenant_id", "==", tenant_id))
+            .limit(limit)
+        )
+        return [ApiKeyRecord.model_validate(s.to_dict()) for s in q.stream()]
+
+    def find_api_key_by_hash(self, key_hash: str) -> ApiKeyRecord | None:
+        """Look a key up by its hash. Returns None if absent or revoked.
+
+        Queried by hash, never by plaintext — the plaintext is not stored
+        anywhere, so there is nothing to match against even in principle.
+        """
+        q = (
+            self._db.collection(COLLECTION_API_KEYS)
+            .where(filter=firestore.FieldFilter("key_hash", "==", key_hash))
+            .limit(1)
+        )
+        for snap in q.stream():
+            record = ApiKeyRecord.model_validate(snap.to_dict())
+            return None if record.revoked else record
+        return None
+
+    def revoke_api_key(self, key_id: str, tenant_id: str) -> ApiKeyRecord:
+        snap = self._db.collection(COLLECTION_API_KEYS).document(key_id).get()
+        if not snap.exists:
+            raise NotFoundError(f"api key {key_id} not found")
+        record = ApiKeyRecord.model_validate(snap.to_dict())
+        if record.tenant_id != tenant_id:
+            raise TenantMismatchError(f"api key {key_id} belongs to another tenant")
+        revoked = record.model_copy(update={"revoked": True})
+        self.upsert_api_key(revoked)
+        return revoked
+
+    def touch_api_key(self, key_id: str) -> None:
+        """Record last use. Best-effort: never fail a request over telemetry."""
+        try:
+            self._db.collection(COLLECTION_API_KEYS).document(key_id).update(
+                {"last_used_at": datetime.now(timezone.utc).isoformat()}
+            )
+        except Exception:  # pragma: no cover - telemetry only
+            pass
+
+    # -- retention ----------------------------------------------------------
+
+    def list_documents_created_before(
+        self, tenant_id: str, cutoff: datetime, limit: int = 500
+    ) -> list[Document]:
+        """Documents older than `cutoff`, for the retention sweep.
+
+        Deliberately tenant-scoped and bounded: the sweep processes one
+        tenant at a time so a bug cannot run away across the whole dataset.
+        """
+        q = (
+            self._db.collection(COLLECTION_DOCUMENTS)
+            .where(filter=firestore.FieldFilter("tenant_id", "==", tenant_id))
+            .limit(limit)
+        )
+        out: list[Document] = []
+        for snap in q.stream():
+            doc = Document.model_validate(snap.to_dict())
+            if doc.created_at < cutoff:
+                out.append(doc)
+        return out
+
+    def delete_document(self, document_id: str, tenant_id: str) -> None:
+        self.get_document(document_id, tenant_id)  # tenant check before delete
+        self._db.collection(COLLECTION_DOCUMENTS).document(document_id).delete()
+
+    def list_all_tenants(self, limit: int = 1000) -> list[Tenant]:
+        """All tenants. Used only by the scheduled retention sweep."""
+        return [
+            Tenant.model_validate(s.to_dict())
+            for s in self._db.collection(COLLECTION_TENANTS).limit(limit).stream()
+        ]
 
     # -- documents ----------------------------------------------------------
 

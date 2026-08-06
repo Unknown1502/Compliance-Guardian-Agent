@@ -12,7 +12,9 @@ import logging
 import os
 
 from audit_logger import AuditLogger
+from auth_middleware import AuthContext, set_api_key_resolver
 from escalation_service.notifications import AuditNotifier
+from notifications import SlackNotifier
 from gcp_clients import (
     audit_dataset,
     audit_table,
@@ -29,6 +31,8 @@ logger = logging.getLogger("cg.gateway.composition")
 RULESETS_ROOT = os.environ.get("RULESETS_ROOT", "rulesets")
 ESCALATION_THRESHOLD = int(os.environ.get("RISK_ESCALATION_THRESHOLD", "60"))
 DISPATCH_MODE = os.environ.get("CG_DISPATCH_MODE", "inline")  # inline | cloud
+# Used to build the "Review" deep link in Slack escalation alerts.
+DASHBOARD_BASE_URL = os.environ.get("CG_DASHBOARD_BASE_URL", "")
 
 
 class Gateway:
@@ -38,11 +42,47 @@ class Gateway:
         self.storage = storage_client()
         self.bq = bigquery_client()
         self.auditor = AuditLogger(self.bq, audit_dataset(), audit_table())
-        self.notifier = AuditNotifier(self.db, self.auditor)
+        # Slack wraps the audit notifier rather than replacing it: the audit
+        # record is the guarantee, Slack is the convenience on top.
+        self.notifier = SlackNotifier(
+            AuditNotifier(self.db, self.auditor),
+            self.repo,
+            dashboard_base_url=DASHBOARD_BASE_URL,
+        )
         self.raw_bucket = raw_docs_bucket()
         self._gemini = None
         self._task_service = None
         self._billing = None
+        self._register_api_key_auth()
+
+    def _register_api_key_auth(self) -> None:
+        """Teach auth_middleware how to resolve an X-API-Key header.
+
+        Injected here so the middleware itself has no datastore dependency,
+        and so the tenant on the resolved context comes from the stored key
+        record — the caller never supplies it.
+        """
+        from api_keys import hash_api_key, looks_like_api_key
+
+        repo = self.repo
+
+        def resolve(plaintext: str):
+            if not looks_like_api_key(plaintext):
+                return None
+            record = repo.find_api_key_by_hash(hash_api_key(plaintext))
+            if record is None:
+                return None
+            repo.touch_api_key(record.key_id)
+            # API keys act with owner rights; scoping still comes from the
+            # key's own tenant_id, so cross-tenant access remains impossible.
+            return AuthContext(
+                uid=f"api_key:{record.key_id}",
+                tenant_id=record.tenant_id,
+                role="owner",
+                email=None,
+            )
+
+        set_api_key_resolver(resolve)
 
     # Lazy Gemini so read/decision paths work without a key.
     def gemini(self):

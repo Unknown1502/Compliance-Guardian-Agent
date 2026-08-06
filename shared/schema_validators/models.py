@@ -46,6 +46,36 @@ class Tenant(StrictModel):
     plan_tier: PlanTier = PlanTier.FREE
     created_at: datetime = Field(default_factory=utcnow)
 
+    # Slack incoming-webhook URL for escalation alerts. Empty = notifications
+    # off. Validated as a Slack host on write (see api_gateway) because this
+    # is a tenant-supplied URL the server itself fetches.
+    slack_webhook_url: str = Field(default="", max_length=500)
+
+    # Days to keep uploaded documents before the retention sweep deletes them.
+    # 0 means keep indefinitely, and is the default — retention deletion is
+    # destructive, so it never happens unless a tenant explicitly opts in.
+    # The append-only audit trail is NEVER affected by this setting.
+    retention_days: int = Field(default=0, ge=0, le=3650)
+
+
+class ApiKeyRecord(StrictModel):
+    """A programmatic API key. The plaintext key is NEVER stored here.
+
+    key_hash is a SHA-256 of the key; display_prefix is the first few
+    characters so a human can tell keys apart in a list without the secret
+    being recoverable from this record.
+    """
+
+    key_id: str = Field(min_length=1)
+    tenant_id: str = Field(min_length=1)
+    name: str = Field(default="", max_length=120)
+    key_hash: str = Field(min_length=64, max_length=64)
+    display_prefix: str = Field(min_length=1, max_length=32)
+    created_by: str = Field(min_length=1)
+    created_at: datetime = Field(default_factory=utcnow)
+    last_used_at: datetime | None = None
+    revoked: bool = False
+
 
 class TenantUser(StrictModel):
     """A person inside a tenant.

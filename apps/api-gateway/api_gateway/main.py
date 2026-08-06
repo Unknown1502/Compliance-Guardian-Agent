@@ -31,6 +31,7 @@ from auth_middleware import (
     delete_tenant_member,
     require_auth,
     require_role,
+    set_api_key_resolver,
 )
 from escalation_service.decisions import apply_decision
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
@@ -46,6 +47,7 @@ from gcp_clients.firestore_repo import (
 from google.cloud import bigquery
 from pydantic import BaseModel, Field
 from schema_validators import (
+    ApiKeyRecord,
     Document,
     DocumentStatus,
     PlanTier,
@@ -216,6 +218,43 @@ class RulesetResponse(BaseModel):
     jurisdiction: str
     required_fields: list[str]
     rules: list[RuleResponse]
+
+
+class NotificationSettingsResponse(BaseModel):
+    slack_configured: bool
+    slack_webhook_masked: str
+
+
+class NotificationSettingsRequest(BaseModel):
+    slack_webhook_url: str = Field(default="", max_length=500)
+
+
+class RetentionSettingsResponse(BaseModel):
+    retention_days: int
+    minimum_days: int
+    enabled: bool
+
+
+class RetentionSettingsRequest(BaseModel):
+    retention_days: int = Field(ge=0, le=3650)
+
+
+class ApiKeyResponse(BaseModel):
+    key_id: str
+    name: str
+    display_prefix: str
+    created_at: str
+    last_used_at: str | None
+    revoked: bool
+
+
+class ApiKeyCreatedResponse(ApiKeyResponse):
+    # Present exactly once, in the creation response, and never again.
+    plaintext_key: str
+
+
+class CreateApiKeyRequest(BaseModel):
+    name: str = Field(default="", max_length=120)
 
 
 class TeamMemberResponse(BaseModel):
@@ -821,6 +860,264 @@ def get_active_ruleset(auth: AuthContext = Depends(require_auth)) -> RulesetResp
             )
             for r in ruleset.rules
         ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Notification settings - Slack webhook for escalation alerts.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/settings/notifications", response_model=NotificationSettingsResponse)
+def get_notification_settings(
+    auth: AuthContext = Depends(require_auth),
+) -> NotificationSettingsResponse:
+    from notifications import mask_webhook_url
+
+    tenant = gw().repo.get_tenant(auth.tenant_id)
+    url = getattr(tenant, "slack_webhook_url", "") or ""
+    return NotificationSettingsResponse(
+        slack_configured=bool(url), slack_webhook_masked=mask_webhook_url(url)
+    )
+
+
+@app.put("/api/settings/notifications", response_model=NotificationSettingsResponse)
+def put_notification_settings(
+    req: NotificationSettingsRequest,
+    auth: AuthContext = Depends(require_role("owner", "admin")),
+) -> NotificationSettingsResponse:
+    """Set (or clear, with an empty string) the tenant's Slack webhook.
+
+    The URL is validated against the Slack host allowlist because our server
+    fetches it - an unvalidated value here would be a server-side request
+    forgery primitive.
+    """
+    from notifications import (
+        InvalidWebhookUrlError,
+        mask_webhook_url,
+        validate_slack_webhook_url,
+    )
+
+    g = gw()
+    tenant = g.repo.get_tenant(auth.tenant_id)
+    incoming = (req.slack_webhook_url or "").strip()
+
+    if incoming:
+        try:
+            incoming = validate_slack_webhook_url(incoming)
+        except InvalidWebhookUrlError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+            ) from exc
+
+    updated = tenant.model_copy(update={"slack_webhook_url": incoming})
+    g.repo.upsert_tenant(updated)
+    g.auditor.log(
+        tenant_id=auth.tenant_id,
+        actor=auth.uid,
+        action="settings.notifications_updated",
+        dedup_key=f"{auth.tenant_id}:notifications:{datetime.now(timezone.utc).isoformat()}",
+        before_state={"slack_configured": bool(getattr(tenant, "slack_webhook_url", ""))},
+        after_state={"slack_configured": bool(incoming)},
+    )
+    return NotificationSettingsResponse(
+        slack_configured=bool(incoming), slack_webhook_masked=mask_webhook_url(incoming)
+    )
+
+
+@app.post("/api/settings/notifications/test")
+def test_notification_settings(
+    auth: AuthContext = Depends(require_role("owner", "admin")),
+) -> dict:
+    """Send a real test message so the tenant can confirm delivery works."""
+    from notifications import post_to_slack
+
+    tenant = gw().repo.get_tenant(auth.tenant_id)
+    url = getattr(tenant, "slack_webhook_url", "") or ""
+    if not url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="no Slack webhook configured"
+        )
+    try:
+        post_to_slack(
+            url,
+            {
+                "text": (
+                    f"ComplianceGuardian test message for {tenant.name}. "
+                    f"Escalation alerts are working."
+                )
+            },
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Slack rejected the message: {exc}",
+        ) from exc
+    return {"sent": True}
+
+
+# ---------------------------------------------------------------------------
+# Retention settings - the only destructive setting in the product.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/settings/retention", response_model=RetentionSettingsResponse)
+def get_retention_settings(
+    auth: AuthContext = Depends(require_auth),
+) -> RetentionSettingsResponse:
+    from retention import MIN_RETENTION_DAYS
+
+    tenant = gw().repo.get_tenant(auth.tenant_id)
+    days = int(getattr(tenant, "retention_days", 0) or 0)
+    return RetentionSettingsResponse(
+        retention_days=days, minimum_days=MIN_RETENTION_DAYS, enabled=days > 0
+    )
+
+
+@app.put("/api/settings/retention", response_model=RetentionSettingsResponse)
+def put_retention_settings(
+    req: RetentionSettingsRequest,
+    auth: AuthContext = Depends(require_role("owner", "admin")),
+) -> RetentionSettingsResponse:
+    """0 disables deletion entirely.
+
+    Anything between 1 and the floor is refused rather than silently
+    rounded, so a typo cannot delete a tenant's working set.
+    """
+    from retention import MIN_RETENTION_DAYS
+
+    if 0 < req.retention_days < MIN_RETENTION_DAYS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"retention_days must be 0 (keep forever) or at least "
+                f"{MIN_RETENTION_DAYS}; {req.retention_days} is too short to be safe"
+            ),
+        )
+    g = gw()
+    tenant = g.repo.get_tenant(auth.tenant_id)
+    updated = tenant.model_copy(update={"retention_days": req.retention_days})
+    g.repo.upsert_tenant(updated)
+    g.auditor.log(
+        tenant_id=auth.tenant_id,
+        actor=auth.uid,
+        action="settings.retention_updated",
+        dedup_key=f"{auth.tenant_id}:retention:{datetime.now(timezone.utc).isoformat()}",
+        before_state={"retention_days": int(getattr(tenant, "retention_days", 0) or 0)},
+        after_state={"retention_days": req.retention_days},
+    )
+    return RetentionSettingsResponse(
+        retention_days=req.retention_days,
+        minimum_days=MIN_RETENTION_DAYS,
+        enabled=req.retention_days > 0,
+    )
+
+
+@app.post("/api/settings/retention/preview")
+def preview_retention(
+    auth: AuthContext = Depends(require_role("owner", "admin")),
+) -> dict:
+    """Dry run: what WOULD be deleted under the current policy. Deletes nothing."""
+    from retention import sweep_tenant
+
+    g = gw()
+    tenant = g.repo.get_tenant(auth.tenant_id)
+    result = sweep_tenant(
+        tenant=tenant,
+        repo=g.repo,
+        storage_client=g.storage,
+        auditor=g.auditor,
+        dry_run=True,
+    )
+    return result.as_dict()
+
+
+# ---------------------------------------------------------------------------
+# API keys - programmatic access. The plaintext key is shown exactly once.
+# ---------------------------------------------------------------------------
+
+
+def _api_key_to_response(k: ApiKeyRecord) -> ApiKeyResponse:
+    return ApiKeyResponse(
+        key_id=k.key_id,
+        name=k.name,
+        display_prefix=k.display_prefix,
+        created_at=k.created_at.isoformat(),
+        last_used_at=k.last_used_at.isoformat() if k.last_used_at else None,
+        revoked=k.revoked,
+    )
+
+
+@app.get("/api/keys", response_model=list[ApiKeyResponse])
+def list_keys(
+    auth: AuthContext = Depends(require_role("owner", "admin")),
+) -> list[ApiKeyResponse]:
+    keys = gw().repo.list_api_keys(auth.tenant_id)
+    keys.sort(key=lambda k: k.created_at, reverse=True)
+    return [_api_key_to_response(k) for k in keys]
+
+
+@app.post("/api/keys", response_model=ApiKeyCreatedResponse, status_code=status.HTTP_201_CREATED)
+def create_key(
+    req: CreateApiKeyRequest,
+    auth: AuthContext = Depends(require_role("owner", "admin")),
+) -> ApiKeyCreatedResponse:
+    from api_keys import generate_api_key
+
+    generated = generate_api_key()
+    record = ApiKeyRecord(
+        key_id=str(uuid.uuid4()),
+        tenant_id=auth.tenant_id,  # from the verified session, never the body
+        name=req.name,
+        key_hash=generated.key_hash,
+        display_prefix=generated.display_prefix,
+        created_by=auth.uid,
+    )
+    g = gw()
+    g.repo.upsert_api_key(record)
+    g.auditor.log(
+        tenant_id=auth.tenant_id,
+        actor=auth.uid,
+        action="api_key.created",
+        dedup_key=f"{record.key_id}:created",
+        before_state=None,
+        # The key itself is deliberately absent from the audit record.
+        after_state={
+            "key_id": record.key_id,
+            "name": record.name,
+            "display_prefix": record.display_prefix,
+        },
+    )
+    base = _api_key_to_response(record)
+    return ApiKeyCreatedResponse(**base.model_dump(), plaintext_key=generated.plaintext)
+
+
+@app.delete("/api/keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
+def revoke_key(
+    key_id: str, auth: AuthContext = Depends(require_role("owner", "admin"))
+) -> None:
+    g = gw()
+    try:
+        revoked = g.repo.revoke_api_key(key_id, auth.tenant_id)
+    except NotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="key not found"
+        ) from exc
+    except TenantMismatchError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="key not found"
+        ) from None
+    g.auditor.log(
+        tenant_id=auth.tenant_id,
+        actor=auth.uid,
+        action="api_key.revoked",
+        dedup_key=f"{key_id}:revoked",
+        before_state={"key_id": key_id, "revoked": False},
+        after_state={
+            "key_id": key_id,
+            "revoked": True,
+            "display_prefix": revoked.display_prefix,
+        },
     )
 
 
