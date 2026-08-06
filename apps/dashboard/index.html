@@ -45,18 +45,11 @@
       rel="stylesheet"
     />
 
-    <script>
-      (function () {
-        try {
-          var stored = localStorage.getItem("cg_theme");
-          var theme =
-            stored ?? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-          if (theme === "dark") document.documentElement.classList.add("dark");
-        } catch (e) {
-          /* ignore */
-        }
-      })();
-    </script>
+    <!-- No dark-mode script: this design system is deliberately light-only
+         (see tailwind.config.js) — a dark variant would contradict the
+         calm/editorial identity, not complement it, and previously caused
+         the app shell to silently diverge from the landing page whenever a
+         visitor's OS preferred dark mode. -->
   </head>
   <body>
     <div id="root"></div>

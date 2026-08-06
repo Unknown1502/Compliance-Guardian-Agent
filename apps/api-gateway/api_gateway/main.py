@@ -193,6 +193,21 @@ class CheckoutResponse(BaseModel):
     checkout_url: str
 
 
+class RuleResponse(BaseModel):
+    id: str
+    description: str
+    check_type: str
+    severity: str
+
+
+class RulesetResponse(BaseModel):
+    rule_set_version: str
+    industry: str
+    jurisdiction: str
+    required_fields: list[str]
+    rules: list[RuleResponse]
+
+
 # ---------------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------------
@@ -619,6 +634,41 @@ async def billing_webhook(request: Request) -> dict:
         },
     )
     return {"received": True, "handled": True}
+
+
+# ---------------------------------------------------------------------------
+# Ruleset — read-only. Lets a tenant see exactly what they're being checked
+# against, by industry/jurisdiction resolved from their own tenant record
+# (never client-supplied), same trust posture as everything else here.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/ruleset", response_model=RulesetResponse)
+def get_active_ruleset(auth: AuthContext = Depends(require_auth)) -> RulesetResponse:
+    g = gw()
+    tenant = g.repo.get_tenant(auth.tenant_id)
+    try:
+        ruleset = load_ruleset(RULESETS_ROOT, tenant.industry, tenant.jurisdiction)
+    except (RulesetNotFoundError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"no ruleset for industry={tenant.industry!r} jurisdiction={tenant.jurisdiction!r}",
+        ) from exc
+    return RulesetResponse(
+        rule_set_version=ruleset.rule_set_version,
+        industry=ruleset.industry,
+        jurisdiction=ruleset.jurisdiction,
+        required_fields=ruleset.required_fields,
+        rules=[
+            RuleResponse(
+                id=r.id,
+                description=r.description,
+                check_type=r.check_type.value,
+                severity=r.severity.value,
+            )
+            for r in ruleset.rules
+        ],
+    )
 
 
 # ---------------------------------------------------------------------------

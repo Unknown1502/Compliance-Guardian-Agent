@@ -36,6 +36,21 @@ export interface ComplianceCheck {
   created_at?: string;
 }
 
+export interface RulesetRule {
+  id: string;
+  description: string;
+  check_type: string;
+  severity: "low" | "medium" | "high" | "critical";
+}
+
+export interface RulesetSummary {
+  rule_set_version: string;
+  industry: string;
+  jurisdiction: string;
+  required_fields: string[];
+  rules: RulesetRule[];
+}
+
 export interface AuditEvent {
   event_id: string;
   tenant_id: string;

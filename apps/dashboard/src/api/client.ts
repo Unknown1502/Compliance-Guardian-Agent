@@ -112,6 +112,12 @@ export async function decideCheck(
   return jsonOrThrow(res);
 }
 
+export async function getActiveRuleset(
+  session: Session,
+): Promise<import("../types").RulesetSummary> {
+  return jsonOrThrow(await authedFetch(session, "/api/ruleset"));
+}
+
 export async function createCheckout(
   session: Session,
   plan: "oneoff" | "subscription",

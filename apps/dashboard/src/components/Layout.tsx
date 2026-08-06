@@ -7,6 +7,8 @@ import {
   ScrollText,
   FileBarChart2,
   CreditCard,
+  BookMarked,
+  Settings,
   LogOut,
   Menu,
   X,
@@ -14,7 +16,6 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
-import { ThemeToggle } from "./ui/ThemeToggle";
 import { PageTransition } from "./ui/PageTransition";
 import { cn } from "../lib/cn";
 
@@ -31,7 +32,14 @@ const GROUPS = [
     items: [
       { to: "/audit", label: "Audit log", icon: ScrollText },
       { to: "/reports", label: "Reports", icon: FileBarChart2 },
+    ],
+  },
+  {
+    label: "Workspace",
+    items: [
+      { to: "/rulesets", label: "Rulesets", icon: BookMarked },
       { to: "/billing", label: "Billing", icon: CreditCard },
+      { to: "/settings", label: "Settings", icon: Settings },
     ],
   },
 ];
@@ -127,7 +135,6 @@ export function Layout() {
               <LogOut size={13} />
               Sign out
             </button>
-            <ThemeToggle />
           </div>
         </div>
       </aside>
@@ -137,7 +144,6 @@ export function Layout() {
         <div className="flex items-center justify-between">
           <Logo />
           <div className="flex items-center gap-1">
-            <ThemeToggle />
             <button
               onClick={() => setMobileOpen((o) => !o)}
               className="grid h-8 w-8 place-items-center rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"

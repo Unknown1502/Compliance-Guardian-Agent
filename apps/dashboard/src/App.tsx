@@ -12,6 +12,8 @@ import { CheckDetail } from "./views/CheckDetail";
 import { AuditLog } from "./views/AuditLog";
 import { ReportsView } from "./views/ReportsView";
 import { BillingView } from "./views/BillingView";
+import { RulesetsView } from "./views/RulesetsView";
+import { SettingsView } from "./views/SettingsView";
 
 function SplashScreen() {
   return (
@@ -60,7 +62,9 @@ function Gate() {
         <Route path="checks/:checkId" element={<CheckDetail />} />
         <Route path="audit" element={<AuditLog />} />
         <Route path="reports" element={<ReportsView />} />
+        <Route path="rulesets" element={<RulesetsView />} />
         <Route path="billing" element={<BillingView />} />
+        <Route path="settings" element={<SettingsView />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
