@@ -1,7 +1,23 @@
 # ComplianceGuardian ruleset — Healthcare / NDIS providers (Australia)
-# Spec-mandated example ruleset. Version bumps require a new semver and a
-# seed re-run; compliance_checks store rule_set_version for reproducibility.
-rule_set_version: "1.0.0"
+#
+# Modeled on the NDIS Practice Standards (Core Module), the NDIS (Incident
+# Management and Reportable Incidents) Rules 2018, the NDIS (Restrictive
+# Practices and Behaviour Support) Rules 2018, and the NDIS (Complaints
+# Management and Resolution) Rules 2018.
+#
+# Sourced from public secondary guidance and NDIS Commission published
+# material, NOT primary legislative text — a structural starting point that
+# should be reviewed by someone with NDIS regulatory expertise before it is
+# relied on for a real audit.
+#
+# Where the Rules deliberately set no fixed statutory deadline (complaints
+# handling), this ruleset says so explicitly rather than inventing a number
+# to look more complete than the law actually is.
+#
+# 1.1.0 — expanded from 5 to 14 rules: reportable-incident follow-up,
+#         service agreements, restrictive practices + behaviour support,
+#         complaints handling, participant money/property.
+rule_set_version: "1.1.0"
 industry: "healthcare_ndis"
 jurisdiction: "AU"
 required_fields:
@@ -11,6 +27,7 @@ required_fields:
   - record_retention_date
   - provider_registration_number
 rules:
+  # -- Records, consent, registration -------------------------------------
   - id: "data_retention_period"
     description: "Client records must be retained for minimum 7 years"
     check_type: "date_comparison"
@@ -32,6 +49,8 @@ rules:
     params:
       field: "provider_registration_number"
       pattern: "^4\\d{7,}$"
+
+  # -- Incident management -------------------------------------------------
   - id: "incident_reporting_window"
     description: "Reportable incidents must be lodged with the NDIS Commission within 24 hours of identification"
     check_type: "date_comparison"
@@ -41,9 +60,94 @@ rules:
       relative_to: "incident_identified_date"
       maximum_hours: 24
       applies_when_present: true
+  - id: "reportable_incident_detailed_report"
+    description: "Following the initial 24-hour notification, a detailed reportable incident report must be submitted to the NDIS Commission within 5 business days of the provider becoming aware of the incident"
+    check_type: "date_comparison"
+    severity: "critical"
+    params:
+      field: "incident_detailed_report_date"
+      relative_to: "incident_identified_date"
+      maximum_days: 5
+      business_days: true
+      applies_when_present: true
+
+  # -- Workforce -----------------------------------------------------------
   - id: "worker_screening_check"
     description: "All workers delivering NDIS supports must hold a valid NDIS Worker Screening Check"
     check_type: "field_presence"
     severity: "high"
     params:
       field: "worker_screening_clearance"
+
+  # -- Service agreements (Core Module: service agreements with participants)
+  - id: "service_agreement_documented"
+    description: "A documented service agreement must exist with the participant, so both parties have a clear shared understanding of the supports being provided"
+    check_type: "field_presence"
+    severity: "high"
+    params:
+      field: "service_agreement_record"
+  - id: "service_agreement_required_terms"
+    description: "The service agreement should cover the participant's goals and supports, pricing aligned to the NDIS Price Guide, cancellation terms, consent and privacy, the complaints process, and a clear exit process. Mark uncertain rather than fail if the agreement exists but its contents are not visible in the document."
+    check_type: "cross_field"
+    severity: "medium"
+    params:
+      field: "service_agreement_terms"
+      expected_terms:
+        - participant_goals
+        - pricing
+        - cancellation
+        - privacy_consent
+        - complaints_process
+        - exit_process
+      applies_when: "service_agreement_record is present"
+
+  # -- Restrictive practices & behaviour support ---------------------------
+  - id: "restrictive_practice_authorisation"
+    description: "Where a regulated restrictive practice is used, the implementing provider must hold authorisation from the authorising body in the participant's state or territory, and evidence of that authorisation must be lodged with the NDIS Commission"
+    check_type: "field_presence"
+    severity: "critical"
+    params:
+      field: "restrictive_practice_authorisation_record"
+      applies_when: "restrictive_practice_used is true"
+  - id: "behaviour_support_plan_lodged"
+    description: "Where a regulated restrictive practice is used, a behaviour support plan must be lodged with the NDIS Commission and be active or partially active — monthly reporting cannot be completed against a plan that is not lodged"
+    check_type: "field_presence"
+    severity: "critical"
+    params:
+      field: "behaviour_support_plan_status"
+      applies_when: "restrictive_practice_used is true"
+  - id: "restrictive_practice_monthly_report"
+    description: "Monthly reporting on the use of regulated restrictive practices must be submitted to the NDIS Commission within 5 business days from the end of the reporting month. Reporting is required for every regulated restrictive practice in the behaviour support plan, including practices that were not used that month."
+    check_type: "date_comparison"
+    severity: "high"
+    params:
+      field: "restrictive_practice_report_date"
+      relative_to: "reporting_month_end_date"
+      maximum_days: 5
+      business_days: true
+      applies_when_present: true
+
+  # -- Complaints (Core Module: rights and responsibilities) ---------------
+  - id: "complaints_process_documented"
+    description: "A documented complaints management process must exist and be made known to participants. The NDIS Complaints Management and Resolution Rules deliberately do NOT prescribe fixed acknowledgement or resolution deadlines — the provider must state its own timeframes and then consistently meet them, so this checks that a documented process with stated timeframes exists, not compliance with an invented statutory number."
+    check_type: "field_presence"
+    severity: "medium"
+    params:
+      field: "complaints_process_record"
+  - id: "complaint_escalation_to_incident"
+    description: "Where a complaint reveals a reportable incident, both the complaints process and the reportable-incident obligations must be followed — a complaint record that describes abuse, neglect, serious injury, unlawful contact, or an unauthorised restrictive practice should also have an incident report"
+    check_type: "cross_field"
+    severity: "high"
+    params:
+      field: "incident_report_date"
+      trigger_field: "complaints_process_record"
+      applies_when: "a complaint describes a reportable incident category"
+
+  # -- Participant money and property (Core Module: safe environment) ------
+  - id: "participant_money_property_handling"
+    description: "Where a provider handles a participant's money or property, records of that handling must be kept so the participant's funds and belongings remain secure and accounted for"
+    check_type: "field_presence"
+    severity: "medium"
+    params:
+      field: "participant_money_property_record"
+      applies_when: "participant money or property was handled"

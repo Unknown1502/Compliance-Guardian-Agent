@@ -182,7 +182,7 @@ class TestRulesets:
     @pytest.mark.parametrize(
         "rel_path,industry,version,rule_count",
         [
-            ("healthcare_ndis/au.yaml", "healthcare_ndis", "1.0.0", 5),
+            ("healthcare_ndis/au.yaml", "healthcare_ndis", "1.1.0", 14),
             ("contract_review/generic.yaml", "contract_review", "1.0.0", 6),
             ("bookkeeping/au.yaml", "bookkeeping", "1.0.0", 5),
             ("aged_care/au.yaml", "aged_care", "1.0.0", 6),

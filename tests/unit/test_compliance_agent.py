@@ -17,6 +17,17 @@ from compliance_agent.checker import (
 from schema_validators import CheckDecision, Document, DocumentStatus, RuleVerdictStatus
 
 
+def _all_ndis_rule_ids() -> list[str]:
+    """Rule ids straight from the real NDIS ruleset.
+
+    Derived rather than hardcoded so expanding the ruleset can't quietly
+    turn these scenarios into something they no longer test.
+    """
+    from schema_validators import load_ruleset
+
+    return [r.id for r in load_ruleset(RULESETS_ROOT, "healthcare_ndis", "AU").rules]
+
+
 def _processed_doc() -> Document:
     return Document(
         document_id="doc-ndis-1",
@@ -143,10 +154,12 @@ class TestComplianceReasoning:
             ]
         )
         out = _run(repo, gemini, FakeAuditor())
-        # All five ruleset rules represented.
-        assert len(out.check.rule_verdicts) == 5
+        # Every rule in the ruleset must be represented, no matter how many
+        # rules the ruleset grows to — one answered, the rest injected.
+        total = len(_all_ndis_rule_ids())
+        assert len(out.check.rule_verdicts) == total
         injected = [v for v in out.check.rule_verdicts if v.confidence == 0.0]
-        assert len(injected) == 4
+        assert len(injected) == total - 1
         assert all(v.status is RuleVerdictStatus.UNCERTAIN for v in injected)
 
     def test_low_risk_auto_approved(self, ndis_tenant):
@@ -158,13 +171,7 @@ class TestComplianceReasoning:
                         "rule_verdicts": [
                             {"rule_id": r, "status": "pass", "confidence": 0.95,
                              "explanation": "ok", "triggering_data_point": "x"}
-                            for r in [
-                                "data_retention_period",
-                                "consent_documentation",
-                                "provider_registration_current",
-                                "incident_reporting_window",
-                                "worker_screening_check",
-                            ]
+                            for r in _all_ndis_rule_ids()
                         ],
                         "risk_score": 8,
                         "justification": "All rules pass.",
