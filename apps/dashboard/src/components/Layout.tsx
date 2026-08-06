@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   LayoutDashboard,
   UploadCloud,
+  Inbox,
   ScrollText,
   FileBarChart2,
   CreditCard,
@@ -26,6 +27,7 @@ const GROUPS = [
     items: [
       { to: "/", label: "Task queue", end: true, icon: LayoutDashboard },
       { to: "/upload", label: "Upload", icon: UploadCloud },
+      { to: "/queue", label: "Human queue", icon: Inbox },
     ],
   },
   {
@@ -118,6 +120,7 @@ export function Layout() {
   const { session, signOut } = useAuth();
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const isFullWidth = location.pathname.startsWith("/checks/");
   if (!session) return null;
 
   return (
@@ -187,8 +190,16 @@ export function Layout() {
         </AnimatePresence>
       </header>
 
-      <main className="min-w-0 flex-1 px-5 py-6 sm:px-8 sm:py-8 lg:px-10">
-        <div className="mx-auto max-w-5xl">
+      {/* The review screen is a side-by-side document/findings layout, so it
+          needs the full viewport rather than the reading-width column that
+          suits the list and settings pages. */}
+      <main
+        className={cn(
+          "min-w-0 flex-1",
+          isFullWidth ? "p-0" : "px-5 py-6 sm:px-8 sm:py-8 lg:px-10",
+        )}
+      >
+        <div className={cn(!isFullWidth && "mx-auto max-w-5xl")}>
           <AnimatePresence mode="wait">
             <PageTransition key={location.pathname}>
               <Outlet />

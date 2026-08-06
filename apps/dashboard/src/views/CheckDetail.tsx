@@ -7,15 +7,30 @@ import {
   User,
   FileText,
   Loader2,
+  ShieldCheck,
+  ShieldAlert,
+  MessageSquare,
+  Send,
 } from "lucide-react";
-import { getCheck, getDocument, decideCheck, ApiError } from "../api/client";
+import {
+  getCheck,
+  getDocument,
+  getDocumentContent,
+  decideCheck,
+  addCheckComment,
+  assignCheck,
+  listTeam,
+  ApiError,
+  type TeamMember,
+} from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useToast } from "../context/ToastContext";
 import { DecisionBadge, VerdictPill } from "../components/Badges";
 import { Button } from "../components/ui/Button";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { CardSkeleton } from "../components/ui/Skeleton";
-import type { ComplianceCheck, DocumentRecord } from "../types";
+import type { ComplianceCheck, DocumentRecord, DocumentContent } from "../types";
+import { cn } from "../lib/cn";
 
 const VERDICT_BAR: Record<string, string> = {
   pass: "bg-status-good",
@@ -26,6 +41,138 @@ const VERDICT_BAR: Record<string, string> = {
 const RISK_TONE = (score: number) =>
   score >= 60 ? "text-status-critical" : score >= 30 ? "text-status-warning" : "text-status-good";
 
+function formatBytes(n: number): string {
+  if (!n) return "—";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** The document as uploaded. Triggering values from failed rules are
+ *  highlighted in the text so a reviewer can see the evidence in place
+ *  rather than taking the finding on faith. */
+function DocumentPane({
+  doc,
+  content,
+  highlights,
+}: {
+  doc: DocumentRecord | null;
+  content: DocumentContent | null;
+  highlights: string[];
+}) {
+  if (!content && !doc) {
+    return (
+      <div className="flex items-center gap-2 px-5 py-5 text-[13px] text-muted sm:px-8">
+        <Loader2 size={13} className="animate-spin" />
+        Loading document…
+      </div>
+    );
+  }
+
+  const renderText = (text: string) => {
+    // Longest first so a short fragment can't pre-empt a longer match.
+    const terms = highlights
+      .filter((h) => h && h.length >= 4)
+      .sort((a, b) => b.length - a.length);
+    if (terms.length === 0) return text;
+
+    const escaped = terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    const re = new RegExp(`(${escaped.join("|")})`, "gi");
+    return text.split(re).map((part, i) =>
+      terms.some((t) => t.toLowerCase() === part.toLowerCase()) ? (
+        <mark key={i} className="rounded bg-orange-100 px-0.5 text-ink">
+          {part}
+        </mark>
+      ) : (
+        <span key={i}>{part}</span>
+      ),
+    );
+  };
+
+  return (
+    <div>
+      {content && (
+        <div className="border-b border-line px-5 py-3 sm:px-8">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+            <span className="text-[13px] font-medium text-ink">{content.filename}</span>
+            <span className="text-[11.5px] text-muted">
+              {content.content_type} · {formatBytes(content.size_bytes)}
+            </span>
+            <span
+              className={cn(
+                "inline-flex items-center gap-1 text-[11.5px] font-medium",
+                content.hash_verified ? "text-status-good" : "text-muted",
+              )}
+              title={
+                content.hash_verified
+                  ? "The stored file still matches the hash recorded at upload."
+                  : "No upload hash on record for this document."
+              }
+            >
+              {content.hash_verified ? <ShieldCheck size={12} /> : <ShieldAlert size={12} />}
+              {content.hash_verified ? "Integrity verified" : "Unverified"}
+            </span>
+          </div>
+          <p className="font-mono-num mt-1 break-all text-[10.5px] text-muted">
+            sha256 {content.content_hash}
+          </p>
+        </div>
+      )}
+
+      <div className="px-5 py-5 sm:px-8">
+        {content?.text != null ? (
+          <pre className="whitespace-pre-wrap break-words font-mono text-[12.5px] leading-relaxed text-ink">
+            {renderText(content.text)}
+          </pre>
+        ) : content?.base64 && content.content_type.startsWith("image/") ? (
+          <img
+            src={`data:${content.content_type};base64,${content.base64}`}
+            alt={content.filename}
+            className="max-w-full rounded-lg border border-line"
+          />
+        ) : content?.base64 ? (
+          <div className="rounded-lg border border-line bg-surface p-4 text-[13px] text-ink-2">
+            <p className="mb-2">
+              This is a {content.content_type} file, which can't be shown inline.
+            </p>
+            <a
+              href={`data:${content.content_type};base64,${content.base64}`}
+              download={content.filename}
+              className="font-medium text-brand-600 hover:text-brand-700"
+            >
+              Download to view
+            </a>
+          </div>
+        ) : (
+          <p className="text-[13px] text-muted">Original file is no longer available.</p>
+        )}
+
+        {/* The extracted fields are what the rules were actually evaluated
+            against, so they belong beside the source, not instead of it. */}
+        {doc && Object.keys(doc.extracted_fields).length > 0 && (
+          <div className="mt-6 border-t border-line pt-5">
+            <span className="eyebrow">Extracted fields</span>
+            <dl className="mt-3 space-y-3">
+              {Object.entries(doc.extracted_fields).map(([field, value]) => (
+                <div key={field} className="border-b border-line pb-2.5 last:border-0">
+                  <dt className="font-mono-num text-[11.5px] font-medium text-muted">{field}</dt>
+                  <dd className="mt-0.5 whitespace-pre-wrap text-[13px] leading-relaxed text-ink">
+                    {value === null || value === "" ? (
+                      <span className="italic text-muted">not present</span>
+                    ) : (
+                      String(value)
+                    )}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function CheckDetail() {
   const { checkId } = useParams<{ checkId: string }>();
   const { session } = useAuth();
@@ -33,10 +180,12 @@ export function CheckDetail() {
   const toast = useToast();
   const [check, setCheck] = useState<ComplianceCheck | null>(null);
   const [doc, setDoc] = useState<DocumentRecord | null>(null);
+  const [content, setContent] = useState<DocumentContent | null>(null);
+  const [team, setTeam] = useState<TeamMember[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
   const [confirmAction, setConfirmAction] = useState<"approve" | "reject" | null>(null);
+  const [commentBody, setCommentBody] = useState("");
 
   const load = async () => {
     if (!session || !checkId) return;
@@ -44,6 +193,7 @@ export function CheckDetail() {
       const c = await getCheck(session, checkId);
       setCheck(c);
       getDocument(session, c.document_id).then(setDoc).catch(() => {});
+      getDocumentContent(session, c.document_id).then(setContent).catch(() => {});
     } catch (err) {
       setError((err as Error).message);
     }
@@ -51,6 +201,7 @@ export function CheckDetail() {
 
   useEffect(() => {
     load();
+    if (session) listTeam(session).then(setTeam).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [checkId, session]);
 
@@ -58,11 +209,9 @@ export function CheckDetail() {
     if (!session || !checkId) return;
     setBusy(true);
     setError(null);
-    setNotice(null);
     try {
       const updated = await decideCheck(session, checkId, action);
       setCheck(updated);
-      setNotice(`Decision recorded: ${action} → ${updated.decision}`);
       toast.push({
         kind: action === "approve" ? "success" : "warning",
         title: action === "approve" ? "Check approved" : "Check rejected",
@@ -70,7 +219,7 @@ export function CheckDetail() {
       });
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
-        setNotice("This item was already actioned by another reviewer.");
+        toast.push({ kind: "warning", title: "Already actioned by another reviewer" });
         await load();
       } else if (err instanceof ApiError && err.status === 403) {
         setError("Only reviewers can approve or reject.");
@@ -83,25 +232,57 @@ export function CheckDetail() {
     }
   };
 
+  const submitComment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!session || !checkId || !commentBody.trim()) return;
+    setBusy(true);
+    try {
+      setCheck(await addCheckComment(session, checkId, commentBody.trim()));
+      setCommentBody("");
+    } catch (err) {
+      toast.push({ kind: "error", title: "Could not add note", description: (err as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const changeAssignee = async (uid: string) => {
+    if (!session || !checkId) return;
+    setBusy(true);
+    try {
+      setCheck(await assignCheck(session, checkId, uid || null));
+      toast.push({ kind: "success", title: uid ? "Reviewer assigned" : "Assignment cleared" });
+    } catch (err) {
+      toast.push({ kind: "error", title: "Could not assign", description: (err as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (error && !check) return <p className="text-[13.5px] text-status-critical">{error}</p>;
   if (!check) {
     return (
       <div className="space-y-6">
-        <div className="h-4 w-16 rounded bg-slate-200 dark:bg-slate-800" />
+        <div className="h-4 w-16 rounded bg-slate-200" />
         <CardSkeleton />
       </div>
     );
   }
 
   const canReview =
-    (session?.role === "reviewer" || session?.role === "admin") &&
-    check.decision === "escalated";
+    (session?.role === "reviewer" || session?.role === "admin") && check.decision === "escalated";
+  const canAssign = session?.role === "owner" || session?.role === "admin";
+
+  // Evidence to highlight in the source: the exact values that drove failures.
+  const highlights = (check.rule_verdicts ?? [])
+    .filter((v) => v.status !== "pass" && v.triggering_data_point)
+    .map((v) => String(v.triggering_data_point).split("=").slice(1).join("=").trim())
+    .filter(Boolean);
 
   return (
     <div className="-mx-5 -mt-2 flex h-[calc(100vh-64px)] flex-col sm:-mx-8 lg:-mx-10">
-      {/* PR-style header bar: identity + verdict + risk, always visible. */}
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-line bg-surface px-5 py-3.5 sm:px-8 lg:px-10">
-        <div className="flex items-center gap-3 min-w-0">
+        <div className="flex min-w-0 items-center gap-3">
           <button
             onClick={() => navigate(-1)}
             className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-ink-2 transition-colors hover:bg-surface-2"
@@ -109,7 +290,7 @@ export function CheckDetail() {
             <ArrowLeft size={15} />
           </button>
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="font-mono-num truncate text-[13px] font-semibold text-ink">
                 {check.document_id}
               </span>
@@ -117,57 +298,42 @@ export function CheckDetail() {
             </div>
             <p className="font-mono-num text-[11.5px] text-muted">
               ruleset v{check.rule_set_version} · check {check.check_id.slice(0, 8)}
+              {doc?.content_hash ? ` · sha256 ${doc.content_hash.slice(0, 10)}…` : ""}
             </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <span className={`font-mono-num text-[22px] font-bold leading-none ${RISK_TONE(check.risk_score)}`}>
+          <span
+            className={cn(
+              "font-mono-num text-[22px] font-bold leading-none",
+              RISK_TONE(check.risk_score),
+            )}
+          >
             {check.risk_score}
           </span>
           <span className="text-[11.5px] text-muted">/ 100 risk</span>
         </div>
       </div>
 
-      {/* Split body: document (left) | findings + actions (right) — the GitHub PR pattern. */}
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-        {/* Left: the artifact under review — extracted data, since that's what was actually evaluated. */}
+        {/* Left: the actual document under review. */}
         <div className="min-h-0 flex-1 overflow-y-auto border-b border-line bg-surface-2 lg:border-b-0 lg:border-r">
-          <div className="border-b border-line bg-surface px-5 py-2.5 sm:px-8">
+          <div className="sticky top-0 z-10 border-b border-line bg-surface px-5 py-2.5 sm:px-8">
             <span className="eyebrow inline-flex items-center gap-1.5">
               <FileText size={12} />
-              Extracted data
+              Source document
             </span>
           </div>
-          <div className="px-5 py-5 sm:px-8">
-            {!doc ? (
-              <div className="flex items-center gap-2 text-[13px] text-muted">
-                <Loader2 size={13} className="animate-spin" />
-                Loading document…
-              </div>
-            ) : (
-              <dl className="space-y-4">
-                {Object.entries(doc.extracted_fields).map(([field, value]) => (
-                  <div key={field} className="border-b border-line pb-3 last:border-0">
-                    <dt className="font-mono-num text-[11.5px] font-medium text-muted">{field}</dt>
-                    <dd className="mt-1 whitespace-pre-wrap text-[13.5px] leading-relaxed text-ink">
-                      {value === null || value === "" ? (
-                        <span className="italic text-muted">not present</span>
-                      ) : (
-                        String(value)
-                      )}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            )}
-          </div>
+          <DocumentPane doc={doc} content={content} highlights={highlights} />
         </div>
 
-        {/* Right: findings + reviewer actions — the "review comments" side. */}
+        {/* Right: findings, oversight, actions. */}
         <div className="flex min-h-0 w-full flex-col lg:w-[440px] lg:shrink-0">
           <div className="min-h-0 flex-1 overflow-y-auto">
             <div className="border-b border-line bg-surface px-5 py-2.5">
-              <span className="eyebrow">Findings · {check.rule_verdicts.length} rules evaluated</span>
+              <span className="eyebrow">
+                Findings · {check.rule_verdicts.length} rules evaluated
+              </span>
             </div>
             <ul className="divide-y divide-line">
               {check.rule_verdicts.map((v) => (
@@ -204,23 +370,88 @@ export function CheckDetail() {
               <p className="mt-1.5 text-[13px] leading-relaxed text-ink-2">{check.justification}</p>
             </div>
 
+            {/* Assignment */}
+            <div className="border-t border-line px-5 py-4">
+              <span className="eyebrow">Assigned reviewer</span>
+              {canAssign ? (
+                <select
+                  value={check.assigned_to ?? ""}
+                  onChange={(e) => changeAssignee(e.target.value)}
+                  disabled={busy}
+                  className="mt-1.5 w-full rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[13px] text-ink focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/15"
+                >
+                  <option value="">Unassigned</option>
+                  {team.map((m) => (
+                    <option key={m.uid} value={m.uid}>
+                      {m.email}
+                      {m.job_title ? ` — ${m.job_title}` : ""}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <p className="mt-1 text-[13px] text-ink-2">
+                  {check.assigned_to
+                    ? team.find((m) => m.uid === check.assigned_to)?.email ?? check.assigned_to
+                    : "Unassigned"}
+                </p>
+              )}
+            </div>
+
+            {/* Reviewer notes */}
+            <div className="border-t border-line px-5 py-4">
+              <span className="eyebrow inline-flex items-center gap-1.5">
+                <MessageSquare size={11} />
+                Reviewer notes ({check.comments?.length ?? 0})
+              </span>
+
+              <ul className="mt-3 space-y-3">
+                {(check.comments ?? []).map((cm) => (
+                  <li key={cm.comment_id} className="rounded-lg bg-surface-2 p-3">
+                    <p className="text-[13px] leading-relaxed text-ink">{cm.body}</p>
+                    <p className="mt-1 text-[11px] text-muted">
+                      {cm.author_email || cm.author_uid} · {cm.created_at.split("T")[0]}
+                    </p>
+                  </li>
+                ))}
+                {(check.comments ?? []).length === 0 && (
+                  <li className="text-[12.5px] text-muted">
+                    No notes yet. Record why this decision was made.
+                  </li>
+                )}
+              </ul>
+
+              <form onSubmit={submitComment} className="mt-3 flex items-end gap-2">
+                <textarea
+                  value={commentBody}
+                  onChange={(e) => setCommentBody(e.target.value)}
+                  rows={2}
+                  placeholder="Add a note…"
+                  className="min-h-[38px] flex-1 resize-y rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[13px] text-ink placeholder:text-muted focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/15"
+                />
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={busy || !commentBody.trim()}
+                  icon={<Send size={13} />}
+                >
+                  Add
+                </Button>
+              </form>
+              <p className="mt-1.5 text-[11px] text-muted">
+                Notes are permanent — they can't be edited or deleted.
+              </p>
+            </div>
+
             {check.reviewer_id && (
               <div className="flex items-center gap-1.5 border-t border-line px-5 py-3 text-[12.5px] text-ink-2">
                 <User size={13} />
-                Reviewed by <span className="font-mono-num">{check.reviewer_id}</span>
+                Decided by <span className="font-mono-num">{check.reviewer_id}</span>
               </div>
             )}
           </div>
 
-          {/* Actions pinned at the bottom of the right rail, like a PR's merge box. */}
           <div className="border-t border-line bg-surface px-5 py-4">
-            {notice && (
-              <p className="mb-3 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-[12.5px] text-brand-800">
-                {notice}
-              </p>
-            )}
             {error && <p className="mb-3 text-[12.5px] text-status-critical">{error}</p>}
-
             {canReview ? (
               <div className="flex gap-2.5">
                 <Button

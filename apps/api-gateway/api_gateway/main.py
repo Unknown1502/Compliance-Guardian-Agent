@@ -18,6 +18,7 @@ Orchestrator's TaskService (Cloud Tasks in prod, inline locally).
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import uuid
@@ -51,6 +52,7 @@ from schema_validators import (
     Document,
     DocumentStatus,
     PlanTier,
+    ReviewComment,
     RulesetNotFoundError,
     TaskType,
     Tenant,
@@ -142,6 +144,24 @@ class DocumentResponse(BaseModel):
     storage_ref: str
     extracted_fields: dict
     status: str
+    content_hash: str = ""
+    content_type: str = ""
+    size_bytes: int = 0
+    filename: str = ""
+    created_at: str = ""
+
+
+class DocumentContentResponse(BaseModel):
+    document_id: str
+    filename: str
+    content_type: str
+    size_bytes: int
+    content_hash: str
+    # Text when the file is text-like; otherwise base64 so the client can
+    # render or download it without a second round trip.
+    text: str | None = None
+    base64: str | None = None
+    hash_verified: bool = False
 
 
 class TriggerCheckRequest(BaseModel):
@@ -169,6 +189,18 @@ class CheckResponse(BaseModel):
     decision: str
     reviewer_id: str | None
     rule_verdicts: list[dict]
+    assigned_to: str | None = None
+    comments: list[dict] = []
+    created_at: str = ""
+
+
+class AddCommentRequest(BaseModel):
+    body: str = Field(min_length=1, max_length=4000)
+
+
+class AssignRequest(BaseModel):
+    # None / empty clears the assignment.
+    assignee_uid: str | None = None
 
 
 class DecisionRequest(BaseModel):
@@ -390,6 +422,9 @@ async def upload_document(
     document_id = f"doc-{uuid.uuid4().hex[:12]}"
     safe_name = os.path.basename(file.filename or "upload.bin").replace("/", "_")
     blob_path = f"{auth.tenant_id}/{document_id}/{safe_name}"
+    # Hash the exact bytes received, before anything else touches them, so the
+    # hash provably describes what was assessed.
+    content_hash = hashlib.sha256(data).hexdigest()
     bucket = g.storage.bucket(g.raw_bucket)
     bucket.blob(blob_path).upload_from_string(
         data, content_type=file.content_type or "application/octet-stream"
@@ -403,6 +438,10 @@ async def upload_document(
         storage_ref=storage_ref,
         extracted_fields={},
         status=DocumentStatus.PENDING,
+        content_hash=content_hash,
+        content_type=file.content_type or "application/octet-stream",
+        size_bytes=len(data),
+        filename=safe_name,
     )
     g.repo.upsert_document(document)
     g.auditor.log(
@@ -411,7 +450,16 @@ async def upload_document(
         action="document.uploaded",
         dedup_key=f"{document_id}:uploaded",
         before_state=None,
-        after_state={"document_id": document_id, "storage_ref": storage_ref, "source": source},
+        after_state={
+            "document_id": document_id,
+            "storage_ref": storage_ref,
+            "source": source,
+            # Recorded in the immutable trail, so the integrity claim is
+            # anchored to something that cannot later be rewritten.
+            "content_hash": content_hash,
+            "size_bytes": len(data),
+            "filename": safe_name,
+        },
     )
 
     # Dispatch ingestion. In inline mode this runs Gemini synchronously; surface
@@ -438,12 +486,84 @@ def get_document(document_id: str, auth: AuthContext = Depends(require_auth)) ->
     except TenantMismatchError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from exc
     return DocumentResponse(
+        content_hash=getattr(doc, "content_hash", "") or "",
+        content_type=getattr(doc, "content_type", "") or "",
+        size_bytes=getattr(doc, "size_bytes", 0) or 0,
+        filename=getattr(doc, "filename", "") or "",
+        created_at=doc.created_at.isoformat(),
         document_id=doc.document_id,
         tenant_id=doc.tenant_id,
         source=doc.source,
         storage_ref=doc.storage_ref,
         extracted_fields=doc.extracted_fields,
         status=doc.status.value,
+    )
+
+
+@app.get("/api/documents/{document_id}/content", response_model=DocumentContentResponse)
+def get_document_content(
+    document_id: str, auth: AuthContext = Depends(require_auth)
+) -> DocumentContentResponse:
+    """Return the ACTUAL uploaded bytes for the review screen.
+
+    Tenant-scoped through the same repo path as everything else, so a
+    document id from another tenant is a 404, not a leak.
+
+    The stored SHA-256 is recomputed from the bytes fetched back out of
+    Cloud Storage and reported as hash_verified. That turns the integrity
+    claim into something the reviewer can see rather than take on trust: if
+    the stored object were ever altered, this would read false.
+    """
+    import base64 as _b64
+
+    from gcp_clients import raw_docs_bucket
+
+    g = gw()
+    try:
+        doc = g.repo.get_document(document_id, auth.tenant_id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except TenantMismatchError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from None
+
+    ref = doc.storage_ref
+    if not ref.startswith("gs://"):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no stored file")
+    without_scheme = ref[len("gs://") :]
+    bucket_name, _, blob_path = without_scheme.partition("/")
+    # Only ever read from our own raw-docs bucket, whatever the record says.
+    if bucket_name != raw_docs_bucket():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+
+    blob = g.storage.bucket(bucket_name).blob(blob_path)
+    if not blob.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="stored file no longer available"
+        )
+    data = blob.download_as_bytes()
+
+    stored_hash = getattr(doc, "content_hash", "") or ""
+    actual_hash = hashlib.sha256(data).hexdigest()
+    content_type = getattr(doc, "content_type", "") or "application/octet-stream"
+
+    text: str | None = None
+    b64: str | None = None
+    if content_type.startswith("text/") or content_type == "application/json":
+        text = data.decode("utf-8", errors="replace")
+    else:
+        b64 = _b64.b64encode(data).decode("ascii")
+
+    return DocumentContentResponse(
+        document_id=doc.document_id,
+        filename=getattr(doc, "filename", "") or blob_path.rsplit("/", 1)[-1],
+        content_type=content_type,
+        size_bytes=len(data),
+        content_hash=actual_hash,
+        text=text,
+        base64=b64,
+        # Only meaningful when a hash was recorded at upload; older records
+        # predate hashing and report false rather than a false positive.
+        hash_verified=bool(stored_hash) and stored_hash == actual_hash,
     )
 
 
@@ -520,6 +640,113 @@ def decide_check(
         # The losing side of a concurrent two-reviewer race.
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return _check_to_response(result.check)
+
+
+@app.post("/api/compliance/checks/{check_id}/comments", response_model=CheckResponse)
+def add_check_comment(
+    check_id: str,
+    req: AddCommentRequest,
+    auth: AuthContext = Depends(require_auth),
+) -> CheckResponse:
+    """Append a reviewer note.
+
+    Any member of the tenant may comment — an owner questioning a decision is
+    as much a part of oversight as the reviewer making it. Comments are only
+    ever appended; there is no edit or delete, because the value of the
+    record is that it reconstructs what people actually thought at the time.
+    """
+    g = gw()
+    try:
+        check = g.repo.get_check(check_id, auth.tenant_id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except TenantMismatchError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from None
+
+    # min_length on the request only counts raw characters, so "   " gets
+    # through and would then fail model validation as a 500. Reject it here
+    # as the 400 it actually is.
+    body = req.body.strip()
+    if not body:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="comment cannot be empty"
+        )
+
+    comment = ReviewComment(
+        comment_id=str(uuid.uuid4()),
+        author_uid=auth.uid,
+        author_email=auth.email or "",
+        body=body,
+    )
+    updated = check.model_copy(
+        update={"comments": [*(getattr(check, "comments", None) or []), comment]}
+    )
+    g.repo.upsert_check(updated)
+    g.auditor.log(
+        tenant_id=auth.tenant_id,
+        actor=auth.uid,
+        action="check.comment_added",
+        dedup_key=f"{check_id}:comment:{comment.comment_id}",
+        before_state=None,
+        after_state={"check_id": check_id, "comment_id": comment.comment_id},
+    )
+    return _check_to_response(updated)
+
+
+@app.patch("/api/compliance/checks/{check_id}/assignee", response_model=CheckResponse)
+def assign_check(
+    check_id: str,
+    req: AssignRequest,
+    auth: AuthContext = Depends(require_role("owner", "admin")),
+) -> CheckResponse:
+    """Assign (or unassign) a reviewer.
+
+    The assignee must already be a member of this tenant — verified against
+    the user store rather than trusted from the request — so a check can
+    never be assigned to someone outside the workspace.
+    """
+    g = gw()
+    try:
+        check = g.repo.get_check(check_id, auth.tenant_id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except TenantMismatchError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from None
+
+    assignee = (req.assignee_uid or "").strip() or None
+    if assignee is not None:
+        try:
+            g.repo.get_user(assignee, auth.tenant_id)
+        except (NotFoundError, TenantMismatchError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="assignee is not a member of this workspace",
+            ) from None
+
+    previous = getattr(check, "assigned_to", None)
+    updated = check.model_copy(update={"assigned_to": assignee})
+    g.repo.upsert_check(updated)
+    g.auditor.log(
+        tenant_id=auth.tenant_id,
+        actor=auth.uid,
+        action="check.assigned" if assignee else "check.unassigned",
+        dedup_key=f"{check_id}:assign:{assignee or 'none'}:{datetime.now(timezone.utc).isoformat()}",
+        before_state={"assigned_to": previous},
+        after_state={"assigned_to": assignee},
+    )
+    return _check_to_response(updated)
+
+
+@app.get("/api/compliance/queue", response_model=list[CheckResponse])
+def review_queue(auth: AuthContext = Depends(require_auth)) -> list[CheckResponse]:
+    """Checks awaiting a human decision, highest risk first.
+
+    This is the human-oversight surface: everything the AI declined to
+    auto-approve and handed to a person.
+    """
+    checks = gw().repo.list_escalated_checks(auth.tenant_id)
+    checks.sort(key=lambda c: c.risk_score, reverse=True)
+    return [_check_to_response(c) for c in checks]
 
 
 # ---------------------------------------------------------------------------
@@ -1151,6 +1378,12 @@ def get_task(task_id: str, auth: AuthContext = Depends(require_auth)) -> TaskRes
 
 def _check_to_response(c) -> CheckResponse:
     return CheckResponse(
+        assigned_to=getattr(c, "assigned_to", None),
+        comments=[
+            cm.model_dump(mode="json") if hasattr(cm, "model_dump") else dict(cm)
+            for cm in (getattr(c, "comments", None) or [])
+        ],
+        created_at=c.created_at.isoformat() if getattr(c, "created_at", None) else "",
         check_id=c.check_id,
         document_id=c.document_id,
         tenant_id=c.tenant_id,

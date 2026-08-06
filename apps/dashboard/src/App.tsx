@@ -15,6 +15,7 @@ import { BillingView } from "./views/BillingView";
 import { RulesetsView } from "./views/RulesetsView";
 import { SettingsView } from "./views/SettingsView";
 import { TeamView } from "./views/TeamView";
+import { HumanQueue } from "./views/HumanQueue";
 
 function SplashScreen() {
   return (
@@ -60,6 +61,7 @@ function Gate() {
       <Route element={<Layout />}>
         <Route index element={<TaskQueue />} />
         <Route path="upload" element={<UploadView />} />
+        <Route path="queue" element={<HumanQueue />} />
         <Route path="checks/:checkId" element={<CheckDetail />} />
         <Route path="audit" element={<AuditLog />} />
         <Route path="reports" element={<ReportsView />} />

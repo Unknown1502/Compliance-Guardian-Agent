@@ -115,6 +115,15 @@ class Document(StrictModel):
     status: DocumentStatus = DocumentStatus.PENDING
     created_at: datetime = Field(default_factory=utcnow)
 
+    # SHA-256 of the exact bytes received, computed once at upload. This is
+    # what makes "the document that was assessed" verifiable: anyone holding
+    # the original file can recompute this and prove the assessed content was
+    # not altered. Empty on records created before hashing existed.
+    content_hash: str = Field(default="", max_length=64)
+    content_type: str = Field(default="", max_length=100)
+    size_bytes: int = Field(default=0, ge=0)
+    filename: str = Field(default="", max_length=260)
+
 
 # ---------------------------------------------------------------------------
 # Firestore: compliance_checks
@@ -162,6 +171,20 @@ class GeminiCallMetadata(StrictModel):
     response_id: str | None = None
 
 
+class ReviewComment(StrictModel):
+    """One reviewer's note on a compliance check.
+
+    Carries author identity and time so the reasoning behind a human
+    decision stays attributable long after the person has moved on.
+    """
+
+    comment_id: str = Field(min_length=1)
+    author_uid: str = Field(min_length=1)
+    author_email: str = Field(default="", max_length=320)
+    body: str = Field(min_length=1, max_length=4000)
+    created_at: datetime = Field(default_factory=utcnow)
+
+
 class ComplianceCheck(StrictModel):
     check_id: str = Field(min_length=1)
     document_id: str = Field(min_length=1)
@@ -175,6 +198,13 @@ class ComplianceCheck(StrictModel):
     rule_verdicts: list[RuleVerdict] = Field(default_factory=list)
     gemini_metadata: GeminiCallMetadata | None = None
     created_at: datetime = Field(default_factory=utcnow)
+
+    # Human oversight. assigned_to names who is expected to decide; comments
+    # are the reviewer's own reasoning. Both are append-only in practice: a
+    # comment is never edited or removed, because the point of the record is
+    # that you can reconstruct why a human decided what they decided.
+    assigned_to: str | None = None
+    comments: list[ReviewComment] = Field(default_factory=list)
 
     @field_validator("citations")
     @classmethod

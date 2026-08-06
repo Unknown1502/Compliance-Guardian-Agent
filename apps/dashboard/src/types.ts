@@ -4,14 +4,37 @@ export type DocumentStatus = "pending" | "processed" | "failed";
 export type CheckDecision = "auto_approved" | "escalated" | "rejected";
 export type VerdictStatus = "pass" | "fail" | "uncertain";
 
+export interface ReviewComment {
+  comment_id: string;
+  author_uid: string;
+  author_email: string;
+  body: string;
+  created_at: string;
+}
+
+export interface DocumentContent {
+  document_id: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  content_hash: string;
+  text: string | null;
+  base64: string | null;
+  hash_verified: boolean;
+}
+
 export interface DocumentRecord {
   document_id: string;
   tenant_id: string;
   source: string;
   storage_ref: string;
   extracted_fields: Record<string, unknown>;
-  status: DocumentStatus;
+  content_hash?: string;
+  content_type?: string;
+  size_bytes?: number;
+  filename?: string;
   created_at?: string;
+  status: DocumentStatus;
 }
 
 export interface RuleVerdict {
@@ -33,6 +56,8 @@ export interface ComplianceCheck {
   decision: CheckDecision;
   reviewer_id: string | null;
   rule_verdicts: RuleVerdict[];
+  assigned_to?: string | null;
+  comments?: ReviewComment[];
   created_at?: string;
 }
 

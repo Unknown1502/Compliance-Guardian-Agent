@@ -218,6 +218,16 @@ class FirestoreRepo:
             check.model_dump(mode="json")
         )
 
+    def list_escalated_checks(self, tenant_id: str, limit: int = 200) -> list[ComplianceCheck]:
+        """Checks still awaiting a human decision, for the review queue."""
+        q = (
+            self._db.collection(COLLECTION_CHECKS)
+            .where(filter=firestore.FieldFilter("tenant_id", "==", tenant_id))
+            .where(filter=firestore.FieldFilter("decision", "==", CheckDecision.ESCALATED.value))
+            .limit(limit)
+        )
+        return [ComplianceCheck.model_validate(s.to_dict()) for s in q.stream()]
+
     def list_documents(self, tenant_id: str, limit: int = 50) -> list[Document]:
         query = (
             self._db.collection(COLLECTION_DOCUMENTS)

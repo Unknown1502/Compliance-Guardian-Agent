@@ -81,6 +81,15 @@ class FakeRepo:
             raise TenantMismatchError(check_id)
         return c
 
+    def upsert_check(self, check):
+        self.checks[check.check_id] = check
+
+    def list_escalated_checks(self, tenant_id, limit=200):
+        return [
+            c for c in self.checks.values()
+            if c.tenant_id == tenant_id and c.decision is CheckDecision.ESCALATED
+        ]
+
     def apply_reviewer_decision(self, *, check_id, tenant_id, reviewer_id, decision):
         from gcp_clients.firestore_repo import DecisionConflictError
 
@@ -438,3 +447,109 @@ class TestApiKeyAuth:
         c, _ = client
         self._register(monkeypatch, None)
         assert c.get("/api/documents/doc-a").status_code == 401
+
+
+class TestOversight:
+    """Comments, assignment, and the review queue — the human-oversight surface."""
+
+    def _hdr(self, uid="u1", tenant="tenant-a", role="owner"):
+        return {"Authorization": f"Bearer {_dev_token(uid, tenant, role)}"}
+
+    def _seed_user(self, fake, uid, tenant="tenant-a"):
+        from schema_validators import TenantUser
+
+        fake.repo.upsert_user(
+            TenantUser(uid=uid, tenant_id=tenant, email=f"{uid}@x.test", role="reviewer")
+        )
+
+    def test_comment_is_appended_with_author(self, client):
+        c, fake = client
+        r = c.post(
+            "/api/compliance/checks/check-a/comments",
+            headers=self._hdr(),
+            json={"body": "Spoke to the coordinator; consent form exists on paper."},
+        )
+        assert r.status_code == 200, r.text
+        comments = r.json()["comments"]
+        assert len(comments) == 1
+        assert comments[0]["author_uid"] == "u1"
+        assert "coordinator" in comments[0]["body"]
+
+    def test_comments_accumulate_and_are_never_replaced(self, client):
+        c, _ = client
+        c.post("/api/compliance/checks/check-a/comments", headers=self._hdr(), json={"body": "first"})
+        r = c.post(
+            "/api/compliance/checks/check-a/comments", headers=self._hdr(), json={"body": "second"}
+        )
+        bodies = [x["body"] for x in r.json()["comments"]]
+        assert bodies == ["first", "second"]
+
+    def test_comment_on_other_tenant_check_is_404(self, client):
+        c, _ = client
+        r = c.post(
+            "/api/compliance/checks/check-a/comments",
+            headers=self._hdr(tenant="tenant-b"),
+            json={"body": "should not work"},
+        )
+        assert r.status_code == 404
+
+    def test_empty_comment_rejected(self, client):
+        c, _ = client
+        r = c.post(
+            "/api/compliance/checks/check-a/comments", headers=self._hdr(), json={"body": "   "}
+        )
+        assert r.status_code in (400, 422)
+
+    def test_assign_requires_owner_or_admin(self, client):
+        c, _ = client
+        r = c.patch(
+            "/api/compliance/checks/check-a/assignee",
+            headers=self._hdr(role="reviewer"),
+            json={"assignee_uid": "u2"},
+        )
+        assert r.status_code == 403
+
+    def test_assign_rejects_non_member(self, client):
+        c, _ = client
+        r = c.patch(
+            "/api/compliance/checks/check-a/assignee",
+            headers=self._hdr(),
+            json={"assignee_uid": "stranger"},
+        )
+        assert r.status_code == 400
+
+    def test_assign_to_member_succeeds(self, client):
+        c, fake = client
+        self._seed_user(fake, "u2")
+        r = c.patch(
+            "/api/compliance/checks/check-a/assignee",
+            headers=self._hdr(),
+            json={"assignee_uid": "u2"},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["assigned_to"] == "u2"
+
+    def test_unassign_clears(self, client):
+        c, fake = client
+        self._seed_user(fake, "u2")
+        c.patch(
+            "/api/compliance/checks/check-a/assignee",
+            headers=self._hdr(),
+            json={"assignee_uid": "u2"},
+        )
+        r = c.patch(
+            "/api/compliance/checks/check-a/assignee",
+            headers=self._hdr(),
+            json={"assignee_uid": None},
+        )
+        assert r.json()["assigned_to"] is None
+
+    def test_queue_returns_escalated_only_and_is_tenant_scoped(self, client):
+        c, _ = client
+        r = c.get("/api/compliance/queue", headers=self._hdr())
+        assert r.status_code == 200
+        ids = [x["check_id"] for x in r.json()]
+        assert ids == ["check-a"]  # the seeded escalated check
+
+        other = c.get("/api/compliance/queue", headers=self._hdr(tenant="tenant-b"))
+        assert other.json() == []

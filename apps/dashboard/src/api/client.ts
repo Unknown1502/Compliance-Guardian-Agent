@@ -283,3 +283,44 @@ export async function revokeApiKey(session: Session, keyId: string): Promise<voi
     throw new ApiError(res.status, b.detail ?? res.statusText);
   }
 }
+
+// -- document content / oversight -------------------------------------------
+
+export async function getDocumentContent(
+  session: Session,
+  documentId: string,
+): Promise<import("../types").DocumentContent> {
+  return jsonOrThrow(await authedFetch(session, `/api/documents/${documentId}/content`));
+}
+
+export async function addCheckComment(
+  session: Session,
+  checkId: string,
+  body: string,
+): Promise<ComplianceCheck> {
+  return jsonOrThrow(
+    await authedFetch(session, `/api/compliance/checks/${checkId}/comments`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body }),
+    }),
+  );
+}
+
+export async function assignCheck(
+  session: Session,
+  checkId: string,
+  assigneeUid: string | null,
+): Promise<ComplianceCheck> {
+  return jsonOrThrow(
+    await authedFetch(session, `/api/compliance/checks/${checkId}/assignee`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ assignee_uid: assigneeUid }),
+    }),
+  );
+}
+
+export async function getReviewQueue(session: Session): Promise<ComplianceCheck[]> {
+  return jsonOrThrow(await authedFetch(session, "/api/compliance/queue"));
+}
