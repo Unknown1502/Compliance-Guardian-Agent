@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   LayoutDashboard,
@@ -46,16 +46,24 @@ const GROUPS = [
   },
 ];
 
-function Logo() {
+function Logo({ onNavigate }: { onNavigate?: () => void }) {
+  // A link, not a div: clicking the wordmark is the conventional way back to
+  // the dashboard root. For a signed-in user "/" resolves to the Overview,
+  // not the marketing landing page (see the auth gate in App.tsx).
   return (
-    <div className="flex items-center gap-2.5">
+    <Link
+      to="/"
+      onClick={onNavigate}
+      aria-label="Go to overview"
+      className="flex select-none items-center gap-2.5 rounded-lg transition-opacity hover:opacity-80"
+    >
       <div className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-brand-600 text-white">
         <ShieldCheck size={16} strokeWidth={2.5} />
       </div>
-      <span className="text-[15px] font-bold tracking-tight text-slate-900 dark:text-slate-50">
+      <span className="text-[15px] font-bold tracking-tight text-ink">
         ComplianceGuardian
       </span>
-    </div>
+    </Link>
   );
 }
 
@@ -144,7 +152,7 @@ export function Layout() {
       {/* Mobile header */}
       <header className="sticky top-0 z-40 border-b border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-950 lg:hidden">
         <div className="flex items-center justify-between">
-          <Logo />
+          <Logo onNavigate={() => setMobileOpen(false)} />
           <div className="flex items-center gap-1">
             <button
               onClick={() => setMobileOpen((o) => !o)}
