@@ -13,12 +13,20 @@ from typing import Any
 
 from google.cloud import firestore
 
-from schema_validators import CheckDecision, ComplianceCheck, Document, Task, Tenant
+from schema_validators import (
+    CheckDecision,
+    ComplianceCheck,
+    Document,
+    Task,
+    Tenant,
+    TenantUser,
+)
 
 COLLECTION_TENANTS = "tenants"
 COLLECTION_DOCUMENTS = "documents"
 COLLECTION_CHECKS = "compliance_checks"
 COLLECTION_TASKS = "tasks"
+COLLECTION_USERS = "users"
 
 
 class TenantMismatchError(PermissionError):
@@ -49,6 +57,36 @@ class FirestoreRepo:
         self._db.collection(COLLECTION_TENANTS).document(tenant.tenant_id).set(
             tenant.model_dump(mode="json")
         )
+
+    # -- users --------------------------------------------------------------
+
+    def upsert_user(self, user: TenantUser) -> None:
+        self._db.collection(COLLECTION_USERS).document(user.uid).set(
+            user.model_dump(mode="json")
+        )
+
+    def list_users(self, tenant_id: str, limit: int = 100) -> list[TenantUser]:
+        q = (
+            self._db.collection(COLLECTION_USERS)
+            .where(filter=firestore.FieldFilter("tenant_id", "==", tenant_id))
+            .limit(limit)
+        )
+        return [TenantUser.model_validate(s.to_dict()) for s in q.stream()]
+
+    def get_user(self, uid: str, tenant_id: str) -> TenantUser:
+        snap = self._db.collection(COLLECTION_USERS).document(uid).get()
+        if not snap.exists:
+            raise NotFoundError(f"user {uid} not found")
+        user = TenantUser.model_validate(snap.to_dict())
+        if user.tenant_id != tenant_id:
+            raise TenantMismatchError(f"user {uid} belongs to another tenant")
+        return user
+
+    def delete_user(self, uid: str, tenant_id: str) -> None:
+        # Read-then-delete so a caller can never remove a user outside their
+        # own tenant by guessing a uid.
+        self.get_user(uid, tenant_id)
+        self._db.collection(COLLECTION_USERS).document(uid).delete()
 
     # -- documents ----------------------------------------------------------
 

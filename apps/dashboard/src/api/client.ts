@@ -42,6 +42,7 @@ export async function signup(
   email: string,
   password: string,
   businessName: string,
+  jobTitle: string,
 ): Promise<{ tenant_id: string; uid: string; email: string }> {
   const res = await fetch(`${API_BASE_URL}/api/signup`, {
     method: "POST",
@@ -50,6 +51,7 @@ export async function signup(
       email,
       password,
       business_name: businessName,
+      job_title: jobTitle,
       industry: "healthcare_ndis",
       jurisdiction: "AU",
     }),
@@ -141,4 +143,39 @@ export async function getTask(
   taskId: string,
 ): Promise<TaskRecord> {
   return jsonOrThrow(await authedFetch(session, `/api/tasks/${taskId}`));
+}
+
+// -- team ------------------------------------------------------------------
+
+export interface TeamMember {
+  uid: string;
+  email: string;
+  role: string;
+  job_title: string;
+  created_at: string;
+}
+
+export async function listTeam(session: Session): Promise<TeamMember[]> {
+  return jsonOrThrow(await authedFetch(session, "/api/team"));
+}
+
+export async function addTeamMember(
+  session: Session,
+  body: { email: string; password: string; role: string; job_title: string },
+): Promise<TeamMember> {
+  return jsonOrThrow(
+    await authedFetch(session, "/api/team", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+export async function removeTeamMember(session: Session, uid: string): Promise<void> {
+  const res = await authedFetch(session, `/api/team/${uid}`, { method: "DELETE" });
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new ApiError(res.status, b.detail ?? res.statusText);
+  }
 }

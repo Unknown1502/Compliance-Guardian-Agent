@@ -36,6 +36,7 @@ from schema_validators.models import (
     TaskStatus,
     TaskType,
     Tenant,
+    TenantUser,
 )
 from schema_validators.rulesets import RulesetNotFoundError, load_ruleset, load_ruleset_file
 
@@ -56,6 +57,7 @@ __all__ = [
     "TaskStatus",
     "TaskType",
     "Tenant",
+    "TenantUser",
     "RulesetNotFoundError",
     "load_ruleset",
     "load_ruleset_file",

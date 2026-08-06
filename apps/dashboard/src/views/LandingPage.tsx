@@ -319,7 +319,7 @@ export function LandingPage() {
           <div className="rounded-xl border border-line bg-surface p-6 text-left">
             <h3 className="text-[16px] font-bold text-ink">Single audit</h3>
             <div className="mt-3 flex items-baseline gap-1">
-              <span className="text-[30px] font-bold text-ink">$299</span>
+              <span className="text-[30px] font-bold text-ink">$50</span>
               <span className="text-[13px] text-ink-2">USD, one-off</span>
             </div>
             <p className="mt-2 text-[13px] text-ink-2">One document, fully checked and cited.</p>

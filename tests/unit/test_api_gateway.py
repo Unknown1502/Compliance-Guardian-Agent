@@ -24,6 +24,7 @@ def _dev_token(uid: str, tenant_id: str, role: str) -> str:
 class FakeRepo:
     def __init__(self):
         self.tenants = {}
+        self.users = {}
         self.docs = {
             "doc-a": Document(
                 document_id="doc-a", tenant_id="tenant-a", source="upload",
@@ -39,6 +40,26 @@ class FakeRepo:
                 reviewer_id=None,
             )
         }
+
+    def upsert_user(self, user):
+        self.users[user.uid] = user
+
+    def list_users(self, tenant_id, limit=100):
+        return [u for u in self.users.values() if u.tenant_id == tenant_id]
+
+    def get_user(self, uid, tenant_id):
+        from gcp_clients.firestore_repo import NotFoundError, TenantMismatchError
+
+        u = self.users.get(uid)
+        if u is None:
+            raise NotFoundError(uid)
+        if u.tenant_id != tenant_id:
+            raise TenantMismatchError(uid)
+        return u
+
+    def delete_user(self, uid, tenant_id):
+        self.get_user(uid, tenant_id)
+        del self.users[uid]
 
     def get_document(self, document_id, tenant_id):
         from gcp_clients.firestore_repo import NotFoundError, TenantMismatchError
@@ -212,3 +233,112 @@ class TestSignup:
         c, _ = client
         r = c.post("/api/signup", json=self._payload(password="short"))
         assert r.status_code == 422  # pydantic min_length validation
+
+
+class TestTeam:
+    """Team roster: /api/team. Roster reads are open to any member; roster
+    mutations are owner/admin only and must never cross a tenant boundary."""
+
+    def _seed(self, fake, uid="u-existing", tenant="tenant-a", role="reviewer"):
+        from schema_validators import TenantUser
+
+        fake.repo.upsert_user(
+            TenantUser(
+                uid=uid,
+                tenant_id=tenant,
+                email=f"{uid}@example.com",
+                role=role,
+                job_title="Compliance Manager",
+            )
+        )
+
+    def test_signup_records_job_title(self, client, monkeypatch):
+        c, fake = client
+        import api_gateway.main as main
+
+        monkeypatch.setattr(main, "create_tenant_owner", lambda **kw: "uid-owner-1")
+        r = c.post(
+            "/api/signup",
+            json={
+                "email": "owner@x.example",
+                "password": "correct-horse-battery-staple",
+                "business_name": "X Pty Ltd",
+                "job_title": "Director of Operations",
+            },
+        )
+        assert r.status_code == 201
+        stored = fake.repo.users["uid-owner-1"]
+        assert stored.job_title == "Director of Operations"
+        assert stored.role == "owner"
+
+    def test_list_team_is_tenant_scoped(self, client):
+        c, fake = client
+        self._seed(fake, uid="u-mine", tenant="tenant-a")
+        self._seed(fake, uid="u-theirs", tenant="tenant-b")
+
+        r = c.get(
+            "/api/team",
+            headers={"Authorization": f"Bearer {_dev_token('u1','tenant-a','owner')}"},
+        )
+        assert r.status_code == 200
+        uids = {m["uid"] for m in r.json()}
+        assert uids == {"u-mine"}
+
+    def test_reviewer_cannot_add_member(self, client):
+        c, _ = client
+        r = c.post(
+            "/api/team",
+            headers={"Authorization": f"Bearer {_dev_token('u1','tenant-a','reviewer')}"},
+            json={"email": "new@x.example", "password": "hunter2hunter2", "role": "reviewer"},
+        )
+        assert r.status_code == 403
+
+    def test_owner_adds_member_with_role_and_title(self, client, monkeypatch):
+        c, fake = client
+        import api_gateway.main as main
+
+        monkeypatch.setattr(main, "create_tenant_member", lambda **kw: "uid-new-member")
+        r = c.post(
+            "/api/team",
+            headers={"Authorization": f"Bearer {_dev_token('u1','tenant-a','owner')}"},
+            json={
+                "email": "reviewer@x.example",
+                "password": "hunter2hunter2",
+                "role": "reviewer",
+                "job_title": "Quality Lead",
+            },
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["job_title"] == "Quality Lead"
+        assert fake.repo.users["uid-new-member"].tenant_id == "tenant-a"
+
+    def test_invalid_role_rejected(self, client):
+        c, _ = client
+        r = c.post(
+            "/api/team",
+            headers={"Authorization": f"Bearer {_dev_token('u1','tenant-a','owner')}"},
+            json={"email": "x@x.example", "password": "hunter2hunter2", "role": "superuser"},
+        )
+        assert r.status_code == 400
+
+    def test_cannot_remove_self(self, client):
+        c, _ = client
+        r = c.delete(
+            "/api/team/u1",
+            headers={"Authorization": f"Bearer {_dev_token('u1','tenant-a','owner')}"},
+        )
+        assert r.status_code == 400
+
+    def test_cannot_remove_user_from_other_tenant(self, client, monkeypatch):
+        c, fake = client
+        import api_gateway.main as main
+
+        self._seed(fake, uid="u-theirs", tenant="tenant-b")
+        monkeypatch.setattr(main, "delete_tenant_member", lambda **kw: None)
+        r = c.delete(
+            "/api/team/u-theirs",
+            headers={"Authorization": f"Bearer {_dev_token('u1','tenant-a','owner')}"},
+        )
+        assert r.status_code == 404
+        # The cross-tenant user must still exist.
+        assert "u-theirs" in fake.repo.users

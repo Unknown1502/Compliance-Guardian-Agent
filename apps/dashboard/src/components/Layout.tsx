@@ -8,6 +8,7 @@ import {
   FileBarChart2,
   CreditCard,
   BookMarked,
+  Users,
   Settings,
   LogOut,
   Menu,
@@ -38,6 +39,7 @@ const GROUPS = [
     label: "Workspace",
     items: [
       { to: "/rulesets", label: "Rulesets", icon: BookMarked },
+      { to: "/team", label: "Team", icon: Users },
       { to: "/billing", label: "Billing", icon: CreditCard },
       { to: "/settings", label: "Settings", icon: Settings },
     ],

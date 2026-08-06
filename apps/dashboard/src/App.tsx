@@ -14,6 +14,7 @@ import { ReportsView } from "./views/ReportsView";
 import { BillingView } from "./views/BillingView";
 import { RulesetsView } from "./views/RulesetsView";
 import { SettingsView } from "./views/SettingsView";
+import { TeamView } from "./views/TeamView";
 
 function SplashScreen() {
   return (
@@ -64,6 +65,7 @@ function Gate() {
         <Route path="reports" element={<ReportsView />} />
         <Route path="rulesets" element={<RulesetsView />} />
         <Route path="billing" element={<BillingView />} />
+        <Route path="team" element={<TeamView />} />
         <Route path="settings" element={<SettingsView />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

@@ -23,7 +23,15 @@ import os
 import uuid
 from datetime import datetime, timezone
 
-from auth_middleware import AuthContext, create_tenant_owner, require_auth, require_role
+from auth_middleware import (
+    VALID_ROLES,
+    AuthContext,
+    create_tenant_member,
+    create_tenant_owner,
+    delete_tenant_member,
+    require_auth,
+    require_role,
+)
 from escalation_service.decisions import apply_decision
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -44,6 +52,7 @@ from schema_validators import (
     RulesetNotFoundError,
     TaskType,
     Tenant,
+    TenantUser,
     load_ruleset,
 )
 
@@ -107,6 +116,7 @@ class SignupRequest(BaseModel):
     email: str = Field(min_length=3, max_length=320)
     password: str = Field(min_length=6, max_length=4096)
     business_name: str = Field(min_length=1, max_length=200)
+    job_title: str = Field(default="", max_length=120)
     industry: str = Field(default="healthcare_ndis")
     jurisdiction: str = Field(default="AU")
 
@@ -208,6 +218,21 @@ class RulesetResponse(BaseModel):
     rules: list[RuleResponse]
 
 
+class TeamMemberResponse(BaseModel):
+    uid: str
+    email: str
+    role: str
+    job_title: str
+    created_at: str
+
+
+class InviteMemberRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=6, max_length=4096)
+    role: str = Field(default="reviewer")
+    job_title: str = Field(default="", max_length=120)
+
+
 # ---------------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------------
@@ -263,6 +288,17 @@ def signup(req: SignupRequest, request: Request) -> SignupResponse:
         plan_tier=PlanTier.FREE,
     )
     g.repo.upsert_tenant(tenant)
+    # Record the person, not just the business — job_title is the only place
+    # we learn who actually operates compliance inside the customer.
+    g.repo.upsert_user(
+        TenantUser(
+            uid=uid,
+            tenant_id=tenant_id,
+            email=req.email,
+            role="owner",
+            job_title=req.job_title,
+        )
+    )
     g.auditor.log(
         tenant_id=tenant_id,
         actor=uid,
@@ -273,6 +309,7 @@ def signup(req: SignupRequest, request: Request) -> SignupResponse:
             "name": req.business_name,
             "industry": req.industry,
             "jurisdiction": req.jurisdiction,
+            "job_title": req.job_title,
         },
     )
     return SignupResponse(tenant_id=tenant_id, uid=uid, email=req.email)
@@ -634,6 +671,122 @@ async def billing_webhook(request: Request) -> dict:
         },
     )
     return {"received": True, "handled": True}
+
+
+# ---------------------------------------------------------------------------
+# Team — people inside one tenant. Listing is open to any member (you should
+# be able to see who can approve your compliance decisions); mutating the
+# roster is owner/admin only.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/team", response_model=list[TeamMemberResponse])
+def list_team(auth: AuthContext = Depends(require_auth)) -> list[TeamMemberResponse]:
+    users = gw().repo.list_users(auth.tenant_id)
+    users.sort(key=lambda u: u.created_at)
+    return [
+        TeamMemberResponse(
+            uid=u.uid,
+            email=u.email,
+            role=u.role,
+            job_title=u.job_title,
+            created_at=u.created_at.isoformat(),
+        )
+        for u in users
+    ]
+
+
+@app.post(
+    "/api/team",
+    response_model=TeamMemberResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def invite_team_member(
+    req: InviteMemberRequest,
+    auth: AuthContext = Depends(require_role("owner", "admin")),
+) -> TeamMemberResponse:
+    """Add a member to the caller's OWN tenant.
+
+    NOTE: there is no email delivery in this system, so this creates the
+    account directly with a password the owner sets and passes on out of
+    band. It is deliberately not called an 'invite' in the UI, because no
+    invite email is ever sent.
+    """
+    if req.role not in VALID_ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"invalid role {req.role!r}; expected one of {sorted(VALID_ROLES)}",
+        )
+    try:
+        uid = create_tenant_member(
+            email=req.email,
+            password=req.password,
+            tenant_id=auth.tenant_id,  # never client-supplied
+            role=req.role,
+        )
+    except EmailAlreadyExistsError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="email already registered"
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    g = gw()
+    user = TenantUser(
+        uid=uid,
+        tenant_id=auth.tenant_id,
+        email=req.email,
+        role=req.role,
+        job_title=req.job_title,
+    )
+    g.repo.upsert_user(user)
+    g.auditor.log(
+        tenant_id=auth.tenant_id,
+        actor=auth.uid,
+        action="team.member_added",
+        dedup_key=f"{uid}:added",
+        before_state=None,
+        after_state={"uid": uid, "email": req.email, "role": req.role, "job_title": req.job_title},
+    )
+    return TeamMemberResponse(
+        uid=user.uid,
+        email=user.email,
+        role=user.role,
+        job_title=user.job_title,
+        created_at=user.created_at.isoformat(),
+    )
+
+
+@app.delete("/api/team/{uid}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_team_member(
+    uid: str, auth: AuthContext = Depends(require_role("owner", "admin"))
+) -> None:
+    if uid == auth.uid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="you cannot remove your own account",
+        )
+    g = gw()
+    try:
+        existing = g.repo.get_user(uid, auth.tenant_id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found") from exc
+    except TenantMismatchError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found") from None
+
+    try:
+        delete_tenant_member(uid=uid, tenant_id=auth.tenant_id)
+    except PermissionError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found") from None
+    g.repo.delete_user(uid, auth.tenant_id)
+    g.auditor.log(
+        tenant_id=auth.tenant_id,
+        actor=auth.uid,
+        action="team.member_removed",
+        dedup_key=f"{uid}:removed",
+        before_state={"uid": uid, "email": existing.email, "role": existing.role},
+        after_state=None,
+    )
 
 
 # ---------------------------------------------------------------------------

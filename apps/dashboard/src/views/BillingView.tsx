@@ -12,7 +12,7 @@ const PLANS = [
     id: "oneoff" as const,
     icon: FileCheck2,
     title: "Single audit",
-    price: "$299",
+    price: "$50",
     cadence: "USD, one-off",
     description: "One more document, one more risk-scored, cited compliance check.",
     features: ["Full Gemini extraction + risk score", "Cited rule verdicts", "Added to your audit trail"],

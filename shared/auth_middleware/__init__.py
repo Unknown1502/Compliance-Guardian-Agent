@@ -82,6 +82,37 @@ def create_tenant_owner(*, email: str, password: str, tenant_id: str) -> str:
     return user.uid
 
 
+def create_tenant_member(*, email: str, password: str, tenant_id: str, role: str) -> str:
+    """Create an additional Firebase Auth user inside an EXISTING tenant.
+
+    Same claim discipline as create_tenant_owner: tenant_id and role are set
+    server-side at creation, so the member's first ID token already carries
+    them. role is validated against VALID_ROLES by the caller before this is
+    reached; validated again here because these claims are the only thing
+    standing between a member and another tenant's data.
+    """
+    _ensure_firebase_app()
+    if role not in VALID_ROLES:
+        raise ValueError(f"invalid role {role!r}")
+    user = fb_auth.create_user(email=email, password=password)
+    fb_auth.set_custom_user_claims(user.uid, {"tenant_id": tenant_id, "role": role})
+    return user.uid
+
+
+def delete_tenant_member(*, uid: str, tenant_id: str) -> None:
+    """Delete a Firebase Auth user, but only if they belong to this tenant.
+
+    The tenant check is not optional: without it, any admin could delete a
+    user in another tenant by guessing a uid.
+    """
+    _ensure_firebase_app()
+    user = fb_auth.get_user(uid)
+    claims = user.custom_claims or {}
+    if claims.get("tenant_id") != tenant_id:
+        raise PermissionError("user does not belong to this tenant")
+    fb_auth.delete_user(uid)
+
+
 @dataclass(frozen=True)
 class AuthContext:
     """Verified identity passed to route handlers. tenant_id is trusted."""

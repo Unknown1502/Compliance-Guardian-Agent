@@ -38,6 +38,7 @@ export function Login({ initialMode = "signin" }: { initialMode?: "signin" | "si
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [businessName, setBusinessName] = useState("");
+  const [jobTitle, setJobTitle] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -53,7 +54,7 @@ export function Login({ initialMode = "signin" }: { initialMode?: "signin" | "si
     setBusy(true);
     try {
       if (mode === "signup") {
-        await signupRequest(email, password, businessName);
+        await signupRequest(email, password, businessName, jobTitle);
       }
       await firebaseSignIn(email, password);
     } catch (err) {
@@ -149,16 +150,31 @@ export function Login({ initialMode = "signin" }: { initialMode?: "signin" | "si
               </div>
 
               {mode === "signup" && (
-                <label className="block">
-                  <span className={LABEL}>Business name</span>
-                  <input
-                    type="text"
-                    placeholder="Sunrise Community Care Pty Ltd"
-                    className={FIELD}
-                    value={businessName}
-                    onChange={(e) => setBusinessName(e.target.value)}
-                  />
-                </label>
+                <>
+                  <label className="block">
+                    <span className={LABEL}>Business name</span>
+                    <input
+                      type="text"
+                      placeholder="Sunrise Community Care Pty Ltd"
+                      className={FIELD}
+                      value={businessName}
+                      onChange={(e) => setBusinessName(e.target.value)}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className={LABEL}>Your role</span>
+                    <input
+                      type="text"
+                      placeholder="Compliance Manager"
+                      className={FIELD}
+                      value={jobTitle}
+                      onChange={(e) => setJobTitle(e.target.value)}
+                    />
+                    <span className="mt-1 block text-[11.5px] text-muted">
+                      Shown to your team so reviewers know who decided what.
+                    </span>
+                  </label>
+                </>
               )}
               <label className="block">
                 <span className={LABEL}>Email</span>

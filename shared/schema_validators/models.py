@@ -47,6 +47,24 @@ class Tenant(StrictModel):
     created_at: datetime = Field(default_factory=utcnow)
 
 
+class TenantUser(StrictModel):
+    """A person inside a tenant.
+
+    Mirrors the Firebase Auth user (uid is the Firebase uid) but adds the
+    profile fields Firebase doesn't carry — notably job_title, which is what
+    lets an owner see who actually reviews their compliance decisions.
+    Firebase remains the source of truth for authentication; this record is
+    the source of truth for display.
+    """
+
+    uid: str = Field(min_length=1)
+    tenant_id: str = Field(min_length=1)
+    email: str = Field(min_length=3)
+    role: str = Field(min_length=1)
+    job_title: str = Field(default="", max_length=120)
+    created_at: datetime = Field(default_factory=utcnow)
+
+
 # ---------------------------------------------------------------------------
 # Firestore: documents
 # ---------------------------------------------------------------------------
