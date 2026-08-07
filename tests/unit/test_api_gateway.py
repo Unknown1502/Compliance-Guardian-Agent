@@ -322,13 +322,54 @@ class TestTeam:
         assert fake.repo.users["uid-new-member"].tenant_id == "tenant-a"
 
     def test_invalid_role_rejected(self, client):
-        c, _ = client
+        """An unknown role is refused by the schema, before any user is created.
+
+        422 rather than 400: the role pattern is part of the request contract,
+        so validation rejects it before the handler runs at all. The handler's
+        VALID_ROLES check remains as defence in depth for any caller that
+        reaches it another way.
+        """
+        c, fake = client
         r = c.post(
             "/api/team",
             headers={"Authorization": f"Bearer {_dev_token('u1','tenant-a','owner')}"},
             json={"email": "x@x.example", "password": "hunter2hunter2", "role": "superuser"},
         )
-        assert r.status_code == 400
+        assert r.status_code == 422
+        assert fake.repo.users == {}
+
+    def test_unknown_field_in_body_rejected(self, client):
+        """Request bodies reject unknown fields instead of silently dropping them."""
+        c, _ = client
+        r = c.post(
+            "/api/team",
+            headers={"Authorization": f"Bearer {_dev_token('u1','tenant-a','owner')}"},
+            json={
+                "email": "x@x.example",
+                "password": "hunter2hunter2",
+                "role": "reviewer",
+                "tenant_id": "tenant-b",  # not a field we accept — must not be ignored
+            },
+        )
+        assert r.status_code == 422
+
+    def test_malformed_email_rejected(self, client):
+        c, _ = client
+        r = c.post(
+            "/api/team",
+            headers={"Authorization": f"Bearer {_dev_token('u1','tenant-a','owner')}"},
+            json={"email": "not-an-email", "password": "hunter2hunter2", "role": "reviewer"},
+        )
+        assert r.status_code == 422
+
+    def test_short_password_rejected(self, client):
+        c, _ = client
+        r = c.post(
+            "/api/team",
+            headers={"Authorization": f"Bearer {_dev_token('u1','tenant-a','owner')}"},
+            json={"email": "x@x.example", "password": "short", "role": "reviewer"},
+        )
+        assert r.status_code == 422
 
     def test_cannot_remove_self(self, client):
         c, _ = client

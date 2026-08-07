@@ -35,9 +35,19 @@ from auth_middleware import (
     set_api_key_resolver,
 )
 from escalation_service.decisions import apply_decision
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Path,
+    Request,
+    UploadFile,
+    status,
+)
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from firebase_admin.auth import EmailAlreadyExistsError
 from gcp_clients import audit_dataset, audit_table, project_id
 from gcp_clients.firestore_repo import (
@@ -61,7 +71,11 @@ from schema_validators import (
 )
 
 from api_gateway.composition import RULESETS_ROOT, Gateway
-from api_gateway.rate_limit import TokenBucketRateLimiter
+from api_gateway.rate_limit import (
+    BackoffRateLimiter,
+    TokenBucketRateLimiter,
+    limits_from_env,
+)
 from api_gateway.upload_validation import ContentMismatchError, validate_upload
 
 logging.basicConfig(level=logging.INFO)
@@ -93,16 +107,76 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    # Only the methods and headers this API actually uses. A wildcard here
+    # combined with allow_credentials is broader than anything the dashboard
+    # needs.
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-API-Key"],
 )
 
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Last line of defence against leaking internals on an unexpected error.
+
+    Anything that reaches here is a bug, and the details a bug produces —
+    stack traces, file paths, driver messages, half-formed SQL — are exactly
+    what an attacker wants. The full exception goes to the server log with a
+    correlation id; the client gets that id and nothing else, so a support
+    request can still be traced back to the real error.
+    """
+    error_id = uuid.uuid4().hex[:12]
+    logger.exception(
+        "unhandled error %s on %s %s", error_id, request.method, request.url.path
+    )
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "internal server error", "error_id": error_id},
+    )
+
 _gateway: Gateway | None = None
-_upload_limiter = TokenBucketRateLimiter(capacity=20, refill_per_second=0.5)
-# Signup is public and creates real Firebase Auth users + tenants — keep it
-# tight (5 attempts, refilling 1 every 2 min) since there's no tenant_id yet
-# to key on; keyed by client IP instead.
-_signup_limiter = TokenBucketRateLimiter(capacity=5, refill_per_second=1 / 120)
+
+# Rate limiting. Every threshold comes from the environment (CG_RL_*) so
+# production can be retuned without a code change; see rate_limit.py for the
+# variable names and defaults.
+#
+# Limiters are grouped by what a request costs rather than by URL:
+#   _auth_limiter      signup and any future credential-verifying route
+#   _expensive_limiter anything that spends money or calls a third party
+#                      (Gemini, BigQuery, Stripe, Slack, Firebase user creation)
+#   _standard_limiter  ordinary authenticated reads and writes
+#   _upload_limiter    document upload (unchanged: 20 burst, 0.5/s)
+_RL = limits_from_env()
+_upload_limiter = TokenBucketRateLimiter.from_limits(_RL.upload)
+# Signup is public and creates real Firebase Auth users + tenants, and there
+# is no tenant_id yet to key on — so it is limited by client IP.
+_auth_limiter = TokenBucketRateLimiter.from_limits(_RL.auth)
+_expensive_limiter = TokenBucketRateLimiter.from_limits(_RL.expensive)
+_standard_limiter = TokenBucketRateLimiter.from_limits(_RL.standard)
+# Per-account exponential backoff, layered on top of the per-IP bucket above.
+# Per-IP alone lets an attacker rotate addresses against one account; per-account
+# alone lets them spray one attempt each across many accounts from one host.
+_auth_backoff = BackoffRateLimiter.from_settings(_RL)
+
+
+def _client_ip(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
+def _enforce(limiter: TokenBucketRateLimiter, key: str, what: str) -> None:
+    """Consume one token for `key` or raise 429 with a Retry-After header.
+
+    Retry-After is computed without consuming a token, so a client that
+    honours it is not penalised for asking.
+    """
+    if limiter.allow(key):
+        return
+    retry_after = limiter.retry_after_seconds(key)
+    raise HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail=f"rate limit exceeded for {what}; try again shortly",
+        headers={"Retry-After": str(max(1, retry_after))},
+    )
 
 
 def gw() -> Gateway:
@@ -114,16 +188,65 @@ def gw() -> Gateway:
 
 # ---------------------------------------------------------------------------
 # Schemas
+#
+# Request models reject rather than sanitize: every field is constrained by
+# type, length and (where a format exists) pattern, and `extra="forbid"`
+# means an unrecognised field is a 422, not something silently dropped.
+# Silently dropping is how a client ends up believing it set a value the
+# server never saw.
+#
+# Response models stay permissive — they describe data this service itself
+# produced, and tightening them would only turn our own bugs into 500s.
 # ---------------------------------------------------------------------------
 
+# Identifiers this service generates (doc-…, check-…, tenant-…, task ids,
+# Firebase uids). Constrained so a client-supplied id can never carry path
+# separators into a Firestore document path or a GCS object key.
+_ID_PATTERN = r"^[A-Za-z0-9_.:-]{1,128}$"
 
-class SignupRequest(BaseModel):
-    email: str = Field(min_length=3, max_length=320)
-    password: str = Field(min_length=6, max_length=4096)
+
+def id_field():
+    """A constrained id field for a request body."""
+    return Field(min_length=1, max_length=128, pattern=_ID_PATTERN)
+
+
+def id_path():
+    """Same constraint for an id arriving in the URL path.
+
+    FastAPI rejects a non-matching value with 422 before the handler body
+    runs, so a crafted id never reaches a Firestore document path or a Cloud
+    Storage object key.
+
+    A factory, not a shared constant: FastAPI records the parameter's name on
+    the Path object during route analysis, so reusing one instance across
+    several routes makes them all demand whichever name was bound first.
+    """
+    return Path(min_length=1, max_length=128, pattern=_ID_PATTERN)
+
+# Deliberately permissive on the local part (RFC 5321 allows a great deal)
+# while still requiring the basic shape, so we reject obvious junk without
+# rejecting real addresses. Firebase performs the authoritative check.
+_EMAIL_PATTERN = r"^[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$"
+
+# Ruleset path tokens. load_ruleset() re-validates these before touching the
+# filesystem; constraining them here means a malformed value is a clean 422
+# instead of reaching that code at all.
+_RULESET_TOKEN_PATTERN = r"^[a-z0-9_-]{1,64}$"
+
+
+class StrictRequest(BaseModel):
+    """Base for every request body: unknown fields are an error, not noise."""
+
+    model_config = {"extra": "forbid"}
+
+
+class SignupRequest(StrictRequest):
+    email: str = Field(min_length=3, max_length=320, pattern=_EMAIL_PATTERN)
+    password: str = Field(min_length=8, max_length=4096)
     business_name: str = Field(min_length=1, max_length=200)
     job_title: str = Field(default="", max_length=120)
-    industry: str = Field(default="healthcare_ndis")
-    jurisdiction: str = Field(default="AU")
+    industry: str = Field(default="healthcare_ndis", pattern=_RULESET_TOKEN_PATTERN)
+    jurisdiction: str = Field(default="AU", pattern=r"^[A-Za-z0-9_-]{1,64}$")
 
 
 class SignupResponse(BaseModel):
@@ -165,8 +288,8 @@ class DocumentContentResponse(BaseModel):
     hash_verified: bool = False
 
 
-class TriggerCheckRequest(BaseModel):
-    document_id: str = Field(min_length=1)
+class TriggerCheckRequest(StrictRequest):
+    document_id: str = id_field()
 
 
 class TaskResponse(BaseModel):
@@ -195,20 +318,22 @@ class CheckResponse(BaseModel):
     created_at: str = ""
 
 
-class AddCommentRequest(BaseModel):
+class AddCommentRequest(StrictRequest):
     body: str = Field(min_length=1, max_length=4000)
 
 
-class AssignRequest(BaseModel):
+class AssignRequest(StrictRequest):
     # None / empty clears the assignment.
-    assignee_uid: str | None = None
+    assignee_uid: str | None = Field(
+        default=None, max_length=128, pattern=_ID_PATTERN
+    )
 
 
-class DecisionRequest(BaseModel):
+class DecisionRequest(StrictRequest):
     action: str = Field(pattern="^(approve|reject)$")
 
 
-class CreateReportRequest(BaseModel):
+class CreateReportRequest(StrictRequest):
     period_start: datetime
     period_end: datetime
 
@@ -230,7 +355,7 @@ class ReportResponse(BaseModel):
     used_fixture: bool
 
 
-class CheckoutRequest(BaseModel):
+class CheckoutRequest(StrictRequest):
     plan: str = Field(pattern="^(oneoff|subscription)$")
 
 
@@ -258,7 +383,7 @@ class NotificationSettingsResponse(BaseModel):
     slack_webhook_masked: str
 
 
-class NotificationSettingsRequest(BaseModel):
+class NotificationSettingsRequest(StrictRequest):
     slack_webhook_url: str = Field(default="", max_length=500)
 
 
@@ -268,7 +393,7 @@ class RetentionSettingsResponse(BaseModel):
     enabled: bool
 
 
-class RetentionSettingsRequest(BaseModel):
+class RetentionSettingsRequest(StrictRequest):
     retention_days: int = Field(ge=0, le=3650)
 
 
@@ -286,7 +411,7 @@ class ApiKeyCreatedResponse(ApiKeyResponse):
     plaintext_key: str
 
 
-class CreateApiKeyRequest(BaseModel):
+class CreateApiKeyRequest(StrictRequest):
     name: str = Field(default="", max_length=120)
 
 
@@ -298,10 +423,13 @@ class TeamMemberResponse(BaseModel):
     created_at: str
 
 
-class InviteMemberRequest(BaseModel):
-    email: str = Field(min_length=3, max_length=320)
-    password: str = Field(min_length=6, max_length=4096)
-    role: str = Field(default="reviewer")
+class InviteMemberRequest(StrictRequest):
+    email: str = Field(min_length=3, max_length=320, pattern=_EMAIL_PATTERN)
+    password: str = Field(min_length=8, max_length=4096)
+    # Constrained at the schema so an unknown role is a 422 before any
+    # Firebase user is created; still re-checked against VALID_ROLES in the
+    # handler, which is the single source of truth for the role set.
+    role: str = Field(default="reviewer", pattern="^(owner|reviewer|admin)$")
     job_title: str = Field(default="", max_length=120)
 
 
@@ -324,11 +452,17 @@ def healthz() -> dict:
 
 @app.post("/api/signup", response_model=SignupResponse, status_code=status.HTTP_201_CREATED)
 def signup(req: SignupRequest, request: Request) -> SignupResponse:
-    client_ip = request.client.host if request.client else "unknown"
-    if not _signup_limiter.allow(client_ip):
+    # Two independent gates, because either one alone is bypassable: the
+    # per-IP bucket stops one host hammering many accounts, and the
+    # per-account backoff stops a distributed attempt on one account.
+    client_ip = _client_ip(request)
+    account_key = req.email.strip().lower()
+    _enforce(_auth_limiter, client_ip, "signup")
+    if not _auth_backoff.allow(account_key):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="too many signup attempts; try again shortly",
+            detail="too many attempts for this account; try again shortly",
+            headers={"Retry-After": str(max(1, _auth_backoff.retry_after_seconds(account_key)))},
         )
     # Fail before creating any account/tenant state if we don't have a
     # ruleset for this industry/jurisdiction — there'd be nothing to check
@@ -336,6 +470,7 @@ def signup(req: SignupRequest, request: Request) -> SignupResponse:
     try:
         load_ruleset(RULESETS_ROOT, req.industry, req.jurisdiction)
     except (RulesetNotFoundError, ValueError) as exc:
+        _auth_backoff.record_failure(account_key)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"no ruleset for industry={req.industry!r} jurisdiction={req.jurisdiction!r}",
@@ -345,11 +480,22 @@ def signup(req: SignupRequest, request: Request) -> SignupResponse:
     try:
         uid = create_tenant_owner(email=req.email, password=req.password, tenant_id=tenant_id)
     except EmailAlreadyExistsError as exc:
+        # A repeat signup on a taken email is exactly the enumeration probe
+        # backoff exists to slow down.
+        _auth_backoff.record_failure(account_key)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="email already registered"
         ) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        _auth_backoff.record_failure(account_key)
+        logger.warning("signup rejected for %s: %s", account_key, exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="signup details were rejected; check the email and password and try again",
+        ) from exc
+
+    # Success wipes the penalty so a legitimate user never carries it forward.
+    _auth_backoff.record_success(account_key)
 
     g = gw()
     tenant = Tenant(
@@ -399,11 +545,7 @@ async def upload_document(
     auth: AuthContext = Depends(require_auth),
 ) -> UploadResponse:
     # Rate-limit uploads per tenant.
-    if not _upload_limiter.allow(auth.tenant_id):
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="upload rate limit exceeded; try again shortly",
-        )
+    _enforce(_upload_limiter, auth.tenant_id, "document upload")
     if file.content_type not in ALLOWED_UPLOAD_TYPES:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
@@ -420,7 +562,7 @@ async def upload_document(
         buf.extend(chunk)
         if len(buf) > MAX_UPLOAD_BYTES:
             raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
                 detail=f"file exceeds {MAX_UPLOAD_BYTES} bytes",
             )
     data = bytes(buf)
@@ -499,9 +641,10 @@ async def upload_document(
     try:
         svc = g.task_service()
     except Exception as exc:  # GeminiConfigError etc.
+        logger.exception("ingestion pipeline unavailable for tenant %s", auth.tenant_id)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"ingestion pipeline unavailable: {exc}",
+            detail="ingestion pipeline is temporarily unavailable",
         ) from exc
     task = svc.create_and_dispatch(
         task_type=TaskType.INGEST, target_ref=document_id, tenant_id=auth.tenant_id
@@ -510,11 +653,13 @@ async def upload_document(
 
 
 @app.get("/api/documents/{document_id}", response_model=DocumentResponse)
-def get_document(document_id: str, auth: AuthContext = Depends(require_auth)) -> DocumentResponse:
+def get_document(
+    document_id: str = id_path(), auth: AuthContext = Depends(require_auth)
+) -> DocumentResponse:
     try:
         doc = gw().repo.get_document(document_id, auth.tenant_id)
     except NotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from exc
     except TenantMismatchError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from exc
     return DocumentResponse(
@@ -534,7 +679,7 @@ def get_document(document_id: str, auth: AuthContext = Depends(require_auth)) ->
 
 @app.get("/api/documents/{document_id}/content", response_model=DocumentContentResponse)
 def get_document_content(
-    document_id: str, auth: AuthContext = Depends(require_auth)
+    document_id: str = id_path(), auth: AuthContext = Depends(require_auth)
 ) -> DocumentContentResponse:
     """Return the ACTUAL uploaded bytes for the review screen.
 
@@ -554,7 +699,7 @@ def get_document_content(
     try:
         doc = g.repo.get_document(document_id, auth.tenant_id)
     except NotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from exc
     except TenantMismatchError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from None
 
@@ -608,20 +753,23 @@ def get_document_content(
 def trigger_check(
     req: TriggerCheckRequest, auth: AuthContext = Depends(require_auth)
 ) -> TaskResponse:
+    # Each check is a billable Gemini call — expensive tier.
+    _enforce(_expensive_limiter, auth.tenant_id, "compliance checks")
     g = gw()
     # Verify the document exists and belongs to this tenant before dispatch.
     try:
         g.repo.get_document(req.document_id, auth.tenant_id)
-    except NotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except NotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from None
     except TenantMismatchError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from None
     try:
         svc = g.task_service()
     except Exception as exc:
+        logger.exception("compliance pipeline unavailable for tenant %s", auth.tenant_id)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"compliance pipeline unavailable: {exc}",
+            detail="compliance pipeline is temporarily unavailable",
         ) from exc
     task = svc.create_and_dispatch(
         task_type=TaskType.CHECK, target_ref=req.document_id, tenant_id=auth.tenant_id
@@ -638,11 +786,13 @@ def trigger_check(
 
 
 @app.get("/api/compliance/checks/{check_id}", response_model=CheckResponse)
-def get_check(check_id: str, auth: AuthContext = Depends(require_auth)) -> CheckResponse:
+def get_check(
+    check_id: str = id_path(), auth: AuthContext = Depends(require_auth)
+) -> CheckResponse:
     try:
         c = gw().repo.get_check(check_id, auth.tenant_id)
     except NotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from exc
     except TenantMismatchError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from None
     return _check_to_response(c)
@@ -650,8 +800,8 @@ def get_check(check_id: str, auth: AuthContext = Depends(require_auth)) -> Check
 
 @app.patch("/api/compliance/checks/{check_id}", response_model=CheckResponse)
 def decide_check(
-    check_id: str,
     req: DecisionRequest,
+    check_id: str = id_path(),
     auth: AuthContext = Depends(require_role("reviewer")),
 ) -> CheckResponse:
     g = gw()
@@ -665,19 +815,25 @@ def decide_check(
             approve=(req.action == "approve"),
         )
     except NotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from exc
     except TenantMismatchError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from None
     except DecisionConflictError as exc:
-        # The losing side of a concurrent two-reviewer race.
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        # The losing side of a concurrent two-reviewer race. The message is
+        # fixed so the reviewer sees something actionable rather than the
+        # internal exception text.
+        logger.info("decision conflict on check %s: %s", check_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="this check was already decided by another reviewer",
+        ) from exc
     return _check_to_response(result.check)
 
 
 @app.post("/api/compliance/checks/{check_id}/comments", response_model=CheckResponse)
 def add_check_comment(
-    check_id: str,
     req: AddCommentRequest,
+    check_id: str = id_path(),
     auth: AuthContext = Depends(require_auth),
 ) -> CheckResponse:
     """Append a reviewer note.
@@ -691,7 +847,7 @@ def add_check_comment(
     try:
         check = g.repo.get_check(check_id, auth.tenant_id)
     except NotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from exc
     except TenantMismatchError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from None
 
@@ -727,8 +883,8 @@ def add_check_comment(
 
 @app.patch("/api/compliance/checks/{check_id}/assignee", response_model=CheckResponse)
 def assign_check(
-    check_id: str,
     req: AssignRequest,
+    check_id: str = id_path(),
     auth: AuthContext = Depends(require_role("owner", "admin")),
 ) -> CheckResponse:
     """Assign (or unassign) a reviewer.
@@ -741,7 +897,7 @@ def assign_check(
     try:
         check = g.repo.get_check(check_id, auth.tenant_id)
     except NotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from exc
     except TenantMismatchError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from None
 
@@ -838,6 +994,8 @@ def create_report(
     from gcp_clients import audit_dataset, audit_table, bigquery_client, firestore_client, project_id as pid, reports_table, storage_client as sc
     from gemini_client import GeminiClient, GeminiConfigError
 
+    # Report generation is a Gemini call plus a BigQuery read — expensive tier.
+    _enforce(_expensive_limiter, auth.tenant_id, "report generation")
     if req.period_start >= req.period_end:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -884,7 +1042,7 @@ def create_report(
 
 @app.get("/api/reports/{report_id}", response_class=HTMLResponse)
 def get_report(
-    report_id: str, auth: AuthContext = Depends(require_auth)
+    report_id: str = id_path(), auth: AuthContext = Depends(require_auth)
 ) -> HTMLResponse:
     from gcp_clients import reports_bucket
 
@@ -914,15 +1072,21 @@ def create_checkout(
 ) -> CheckoutResponse:
     from billing import BillingConfigError
 
+    # Creates a real Stripe Checkout session per call — expensive tier.
+    _enforce(_expensive_limiter, auth.tenant_id, "checkout sessions")
     try:
         session = gw().billing().create_checkout_session(
             tenant_id=auth.tenant_id, plan=req.plan, customer_email=auth.email
         )
     except BillingConfigError as exc:
         # Stripe isn't configured yet (no account/keys). Fails as a normal
-        # 503, not a crash — every other endpoint keeps working.
+        # 503, not a crash — every other endpoint keeps working. The
+        # underlying message can name config internals, so it is logged
+        # rather than returned.
+        logger.warning("billing not configured: %s", exc)
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="billing is not available right now",
         ) from exc
     return CheckoutResponse(checkout_url=session.checkout_url)
 
@@ -931,18 +1095,27 @@ def create_checkout(
 async def billing_webhook(request: Request) -> dict:
     from billing import BillingConfigError, WebhookSignatureError
 
+    # Public (Stripe calls it unauthenticated, authenticity comes from the
+    # signature). Limited per source IP so a forged-signature flood cannot
+    # spin the signature verifier indefinitely.
+    _enforce(_standard_limiter, f"webhook:{_client_ip(request)}", "billing webhook")
     payload = await request.body()
     signature = request.headers.get("stripe-signature", "")
     g = gw()
     try:
         event = g.billing().parse_webhook(payload=payload, signature_header=signature)
     except WebhookSignatureError as exc:
+        # Never echo the verifier's reasoning back — it tells a forger which
+        # part of their signature was wrong.
+        logger.warning("stripe webhook signature rejected: %s", exc)
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=f"invalid signature: {exc}"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="invalid signature"
         ) from exc
     except BillingConfigError as exc:
+        logger.warning("billing not configured for webhook: %s", exc)
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="billing is not available right now",
         ) from exc
 
     if event.event_type != "checkout.session.completed" or not event.tenant_id:
@@ -1010,6 +1183,8 @@ def invite_team_member(
     band. It is deliberately not called an 'invite' in the UI, because no
     invite email is ever sent.
     """
+    # Creates a real Firebase Auth user per call — expensive tier.
+    _enforce(_expensive_limiter, auth.tenant_id, "team member creation")
     if req.role not in VALID_ROLES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1027,7 +1202,11 @@ def invite_team_member(
             status_code=status.HTTP_409_CONFLICT, detail="email already registered"
         ) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        logger.warning("team member creation rejected in %s: %s", auth.tenant_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="member details were rejected; check the email and password and try again",
+        ) from exc
 
     g = gw()
     user = TenantUser(
@@ -1057,7 +1236,7 @@ def invite_team_member(
 
 @app.delete("/api/team/{uid}", status_code=status.HTTP_204_NO_CONTENT)
 def remove_team_member(
-    uid: str, auth: AuthContext = Depends(require_role("owner", "admin"))
+    uid: str = id_path(), auth: AuthContext = Depends(require_role("owner", "admin"))
 ) -> None:
     if uid == auth.uid:
         raise HTTPException(
@@ -1191,6 +1370,9 @@ def test_notification_settings(
     """Send a real test message so the tenant can confirm delivery works."""
     from notifications import post_to_slack
 
+    # This makes our server send an outbound HTTP request on demand. Without
+    # a limit it is a free relay for flooding whatever webhook is configured.
+    _enforce(_expensive_limiter, auth.tenant_id, "notification tests")
     tenant = gw().repo.get_tenant(auth.tenant_id)
     url = getattr(tenant, "slack_webhook_url", "") or ""
     if not url:
@@ -1208,9 +1390,12 @@ def test_notification_settings(
             },
         )
     except Exception as exc:
+        # Slack's own response text can carry request details; log it, don't
+        # return it.
+        logger.warning("slack test message failed for %s: %s", auth.tenant_id, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Slack rejected the message: {exc}",
+            detail="Slack did not accept the test message; check the webhook URL",
         ) from exc
     return {"sent": True}
 
@@ -1323,6 +1508,9 @@ def create_key(
 ) -> ApiKeyCreatedResponse:
     from api_keys import generate_api_key
 
+    # Each call mints a long-lived credential; unbounded creation is both a
+    # storage problem and a credential-sprawl problem.
+    _enforce(_expensive_limiter, auth.tenant_id, "API key creation")
     generated = generate_api_key()
     record = ApiKeyRecord(
         key_id=str(uuid.uuid4()),
@@ -1353,7 +1541,7 @@ def create_key(
 
 @app.delete("/api/keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
 def revoke_key(
-    key_id: str, auth: AuthContext = Depends(require_role("owner", "admin"))
+    key_id: str = id_path(), auth: AuthContext = Depends(require_role("owner", "admin"))
 ) -> None:
     g = gw()
     try:
@@ -1386,16 +1574,20 @@ def revoke_key(
 
 
 @app.get("/api/tasks/{task_id}", response_model=TaskResponse)
-def get_task(task_id: str, auth: AuthContext = Depends(require_auth)) -> TaskResponse:
+def get_task(
+    task_id: str = id_path(), auth: AuthContext = Depends(require_auth)
+) -> TaskResponse:
     try:
         task = gw().task_service().get_task(task_id, auth.tenant_id)
     except NotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from exc
     except TenantMismatchError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from None
     except Exception as exc:
+        logger.exception("task lookup failed for %s in tenant %s", task_id, auth.tenant_id)
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="task status is temporarily unavailable",
         ) from exc
     return TaskResponse(
         task_id=task.task_id,

@@ -8,3 +8,12 @@ google-cloud-storage>=2.16,<3
 firebase-admin>=6.5,<7
 pydantic>=2.7,<3
 PyYAML>=6.0,<7
+
+# --- Security floors for transitive dependencies (pip-audit, 2026-08-08) ---
+# These are pulled in indirectly (cryptography + pyasn1 via firebase-admin /
+# google-auth; h2 via the HTTP stack). Pinned here because a transitive
+# dependency with a known CVE ships in the container just the same as a
+# direct one, and nothing else in this file constrains their versions.
+cryptography>=50.0.0
+pyasn1>=0.6.4
+h2>=4.4.1
