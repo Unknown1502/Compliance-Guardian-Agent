@@ -62,6 +62,7 @@ from schema_validators import (
 
 from api_gateway.composition import RULESETS_ROOT, Gateway
 from api_gateway.rate_limit import TokenBucketRateLimiter
+from api_gateway.upload_validation import ContentMismatchError, validate_upload
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("cg.gateway")
@@ -408,16 +409,44 @@ async def upload_document(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
             detail=f"unsupported content type: {file.content_type}",
         )
-    data = await file.read()
+
+    # Bounded read: stop as soon as the limit is exceeded instead of
+    # buffering an unbounded body into memory first.
+    buf = bytearray()
+    while True:
+        chunk = await file.read(64 * 1024)
+        if not chunk:
+            break
+        buf.extend(chunk)
+        if len(buf) > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"file exceeds {MAX_UPLOAD_BYTES} bytes",
+            )
+    data = bytes(buf)
     if len(data) == 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="empty file")
-    if len(data) > MAX_UPLOAD_BYTES:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"file exceeds {MAX_UPLOAD_BYTES} bytes",
-        )
 
     g = gw()
+    try:
+        validate_upload(data, file.content_type)
+    except ContentMismatchError:
+        g.auditor.log(
+            tenant_id=auth.tenant_id,
+            actor=auth.uid,
+            action="document.upload_rejected",
+            dedup_key=f"{auth.tenant_id}:{datetime.now(timezone.utc).isoformat()}",
+            before_state=None,
+            after_state={
+                "declared_content_type": file.content_type,
+                "size_bytes": len(data),
+                "reason": "content_type_mismatch",
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="file content does not match its declared type",
+        )
     # Server-generated document_id — never client-supplied.
     document_id = f"doc-{uuid.uuid4().hex[:12]}"
     safe_name = os.path.basename(file.filename or "upload.bin").replace("/", "_")
