@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from io import BytesIO
 
+from analytics import aggregate_period
 from audit_logger import AuditLogger
 from gcp_clients import reports_bucket
 from gcp_clients.firestore_repo import FirestoreRepo
@@ -41,8 +42,6 @@ from reporting_agent.prompts import (
 )
 
 logger = logging.getLogger("cg.reporting")
-
-COLLECTION_CHECKS = "compliance_checks"
 
 
 @dataclass(frozen=True)
@@ -58,49 +57,6 @@ class ReportOutcome:
     model_name: str
     model_version: str | None
     used_fixture: bool
-
-
-def _aggregate_checks(
-    db: firestore.Client, *, tenant_id: str, period_start: datetime, period_end: datetime
-) -> dict:
-    """Query Firestore for compliance checks in the period and aggregate stats."""
-    checks = (
-        db.collection(COLLECTION_CHECKS)
-        .where("tenant_id", "==", tenant_id)
-        .where("created_at", ">=", period_start.isoformat())
-        .where("created_at", "<", period_end.isoformat())
-        .stream()
-    )
-    total = 0
-    auto_approved = 0
-    escalated = 0
-    rejected = 0
-    citation_counts: dict[str, int] = {}
-
-    for snap in checks:
-        data = snap.to_dict()
-        total += 1
-        decision = data.get("decision", "")
-        if decision == "auto_approved":
-            auto_approved += 1
-        elif decision == "escalated":
-            escalated += 1
-        elif decision == "rejected":
-            rejected += 1
-        for cit in data.get("citations", []) or []:
-            citation_counts[cit] = citation_counts.get(cit, 0) + 1
-
-    top_3 = sorted(citation_counts, key=lambda k: citation_counts[k], reverse=True)[:3]
-    return {
-        "total_checks": total,
-        "auto_approved": auto_approved,
-        "escalated": escalated,
-        "rejected": rejected,
-        "top_failing_rule_ids": top_3,
-        "citation_frequency": {k: citation_counts[k] for k in top_3},
-        "period_start": period_start.isoformat(),
-        "period_end": period_end.isoformat(),
-    }
 
 
 def _render_html(
@@ -217,7 +173,7 @@ def generate_report(
     model_name = "fixture"
     model_version = None
 
-    stats = _aggregate_checks(db, tenant_id=tenant_id, period_start=period_start, period_end=period_end)
+    stats = aggregate_period(db, tenant_id=tenant_id, period_start=period_start, period_end=period_end)
 
     try:
         if gemini is None:
