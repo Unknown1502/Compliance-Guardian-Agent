@@ -147,14 +147,48 @@ class TestUploadValidation:
         assert any(e["action"] == "document.upload_rejected" for e in fake.auditor.events)
 
     def test_oversized_upload_rejected(self, client, monkeypatch):
+        """A body that fits inside one 64 KiB `read()` call can't tell a
+        bounded reader apart from `data = await file.read()` followed by a
+        size check -- both return the same 413 for the same total size. So
+        this body spans several 64 KiB chunks, and the test instruments the
+        UploadFile the handler actually reads from to prove the loop stopped
+        early instead of draining the whole thing first.
+
+        The multipart parser constructs starlette.datastructures.UploadFile.
+        fastapi.UploadFile is a distinct subclass with its own read()
+        override, but it's never the object instantiated here, so patching
+        it would silently observe nothing (confirmed empirically) -- this
+        patches the Starlette base class instead.
+        """
         c, _ = client
         import api_gateway.main as main
+        from starlette.datastructures import UploadFile as StarletteUploadFile
 
-        monkeypatch.setattr(main, "MAX_UPLOAD_BYTES", 1024)
-        big = b"%PDF-1.4\n" + b"x" * 2048
+        chunk = 64 * 1024
+        monkeypatch.setattr(main, "MAX_UPLOAD_BYTES", 2 * chunk)  # 128 KiB limit
+
+        read_sizes: list[int] = []
+        original_read = StarletteUploadFile.read
+
+        async def counting_read(self, size=-1):
+            got = await original_read(self, size)
+            read_sizes.append(len(got))
+            return got
+
+        monkeypatch.setattr(StarletteUploadFile, "read", counting_read)
+
+        total = 8 * chunk  # 512 KiB: 4x the limit, well beyond a single read()
+        big = b"%PDF-1.4\n" + b"x" * (total - 9)
         r = c.post(
             "/api/documents",
             headers=AUTH_HEADER,
             files={"file": ("big.pdf", io.BytesIO(big), "application/pdf")},
         )
         assert r.status_code == 413
+        # Bounded: the running total crosses the 128 KiB limit on the 3rd 64
+        # KiB chunk (192 KiB > 128 KiB) and raises immediately -- it never
+        # reads anywhere close to the full 512 KiB body. A regression to
+        # read-everything-then-check would show up here as the full body
+        # having been consumed before the 413 was raised.
+        assert sum(read_sizes) <= 3 * chunk
+        assert sum(read_sizes) < total

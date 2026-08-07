@@ -435,7 +435,10 @@ async def upload_document(
             tenant_id=auth.tenant_id,
             actor=auth.uid,
             action="document.upload_rejected",
-            dedup_key=f"{auth.tenant_id}:{datetime.now(timezone.utc).isoformat()}",
+            # Stable key derived from the rejected bytes (not wall-clock time):
+            # retries of the same rejected file dedupe via deterministic_event_id,
+            # while different rejected files still get distinct events.
+            dedup_key=f"{auth.tenant_id}:{hashlib.sha256(data).hexdigest()}",
             before_state=None,
             after_state={
                 "declared_content_type": file.content_type,
