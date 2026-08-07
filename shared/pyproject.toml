@@ -20,4 +20,4 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["auth_middleware*", "audit_logger*", "schema_validators*", "gcp_clients*", "gemini_client*", "task_dispatch*", "billing*", "notifications*", "api_keys*", "retention*"]
+include = ["auth_middleware*", "audit_logger*", "schema_validators*", "gcp_clients*", "gemini_client*", "task_dispatch*", "billing*", "notifications*", "api_keys*", "retention*", "analytics*"]
