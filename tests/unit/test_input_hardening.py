@@ -49,10 +49,27 @@ class FakeAuditor:
         return kwargs
 
 
+class _EmptySnapStream:
+    def collection(self, name):
+        return self
+
+    def where(self, *args, **kwargs):
+        return self
+
+    def stream(self):
+        return iter([])
+
+
+def _EmptyFirestore():
+    """Firestore stand-in holding no checks."""
+    return _EmptySnapStream()
+
+
 class FakeGateway:
     def __init__(self):
         self.repo = FakeRepo()
         self.auditor = FakeAuditor()
+        self.db = _EmptyFirestore()
 
 
 @pytest.fixture()
@@ -186,3 +203,39 @@ class TestStrictBodies:
             "/api/compliance/checks", json={"document_id": "../etc/passwd"}, headers=AUTH
         )
         assert r.status_code == 422
+
+
+class TestTrendsEndpoint:
+    """GET /api/analytics/trends — auth, tenant scoping, and bounds."""
+
+    def test_requires_authentication(self, client):
+        c, _, _ = client
+        assert c.get("/api/analytics/trends").status_code == 401
+
+    def test_returns_requested_week_count(self, client, monkeypatch):
+        c, fake, main = client
+        fake.db = _EmptyFirestore()
+        r = c.get("/api/analytics/trends?weeks=4", headers=AUTH)
+        assert r.status_code == 200, r.text
+        assert len(r.json()["weeks"]) == 4
+        assert r.json()["tenant_id"] == "tenant-a"
+
+    def test_defaults_to_twelve_weeks(self, client):
+        c, fake, _ = client
+        fake.db = _EmptyFirestore()
+        r = c.get("/api/analytics/trends", headers=AUTH)
+        assert r.status_code == 200
+        assert len(r.json()["weeks"]) == 12
+
+    @pytest.mark.parametrize("weeks", [0, -1, 53, 100000])
+    def test_out_of_range_week_count_rejected(self, client, weeks):
+        """Unbounded weeks would pull a tenant's whole history in one query."""
+        c, fake, _ = client
+        fake.db = _EmptyFirestore()
+        r = c.get(f"/api/analytics/trends?weeks={weeks}", headers=AUTH)
+        assert r.status_code == 422
+
+    def test_non_numeric_week_count_rejected(self, client):
+        c, fake, _ = client
+        fake.db = _EmptyFirestore()
+        assert c.get("/api/analytics/trends?weeks=lots", headers=AUTH).status_code == 422

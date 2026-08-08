@@ -42,6 +42,7 @@ from fastapi import (
     Form,
     HTTPException,
     Path,
+    Query,
     Request,
     UploadFile,
     status,
@@ -368,6 +369,27 @@ class RuleResponse(BaseModel):
     description: str
     check_type: str
     severity: str
+
+
+class WeekBucketResponse(BaseModel):
+    week_start: str
+    week_end: str
+    total_checks: int
+    auto_approved: int
+    escalated: int
+    rejected: int
+    top_failing_rule_ids: list[str]
+
+
+class TopViolationResponse(BaseModel):
+    rule_id: str
+    count: int
+
+
+class TrendsResponse(BaseModel):
+    tenant_id: str
+    weeks: list[WeekBucketResponse]
+    top_violations: list[TopViolationResponse]
 
 
 class RulesetResponse(BaseModel):
@@ -979,6 +1001,52 @@ def get_audit_logs(
     job = g.bq.query(query, job_config=bigquery.QueryJobConfig(query_parameters=params))
     rows = [dict(r) for r in job.result()]
     return {"tenant_id": auth.tenant_id, "count": len(rows), "events": rows}
+
+
+# ---------------------------------------------------------------------------
+# Analytics — risk over time and recurring violations.
+#
+# Reads Firestore, not BigQuery: the same range query the reporting agent
+# already uses answers this, and a BigQuery query job per dashboard load
+# would be a real per-view cost for a chart.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/analytics/trends", response_model=TrendsResponse)
+def get_trends(
+    weeks: int = Query(default=12, ge=1, le=52),
+    auth: AuthContext = Depends(require_auth),
+) -> TrendsResponse:
+    """Weekly decision mix plus the tenant's most-cited rules.
+
+    weeks is bounded at 52: the window is fetched in one query, so an
+    unbounded value would let a single request pull a tenant's entire
+    history into memory.
+    """
+    _enforce(_standard_limiter, auth.tenant_id, "analytics")
+    from analytics import all_time_top_violations, weekly_trend
+
+    g = gw()
+    buckets = weekly_trend(g.db, tenant_id=auth.tenant_id, weeks=weeks)
+    top = all_time_top_violations(g.db, tenant_id=auth.tenant_id)
+    return TrendsResponse(
+        tenant_id=auth.tenant_id,
+        weeks=[
+            WeekBucketResponse(
+                week_start=b["week_start"],
+                week_end=b["week_end"],
+                total_checks=b["total_checks"],
+                auto_approved=b["auto_approved"],
+                escalated=b["escalated"],
+                rejected=b["rejected"],
+                top_failing_rule_ids=b["top_failing_rule_ids"],
+            )
+            for b in buckets
+        ],
+        top_violations=[
+            TopViolationResponse(rule_id=t["rule_id"], count=t["count"]) for t in top
+        ],
+    )
 
 
 # ---------------------------------------------------------------------------
