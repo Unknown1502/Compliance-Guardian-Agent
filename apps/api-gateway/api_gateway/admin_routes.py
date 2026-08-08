@@ -30,7 +30,12 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 
-from auth_middleware import AuthContext, require_platform_admin, require_role
+from auth_middleware import (
+    AuthContext,
+    require_auth,
+    require_platform_admin,
+    require_role,
+)
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
@@ -66,6 +71,25 @@ class TenantAdminOverview(BaseModel):
     top_failing_rules: list[str]
     slack_configured: bool
     retention_days: int
+
+
+class RemediationItemOut(BaseModel):
+    rule_id: str
+    title: str
+    action: str
+    blocking: bool
+    estimated_minutes: int
+    severity: str
+
+
+class RemediationPlanOut(BaseModel):
+    plan_id: str
+    check_id: str
+    document_id: str
+    items: list[RemediationItemOut]
+    total_estimated_minutes: int
+    used_fixture: bool
+    created_at: str
 
 
 class PlatformTenantRow(BaseModel):
@@ -185,6 +209,47 @@ def build_admin_router(gw) -> APIRouter:
             top_failing_rules=stats.get("top_failing_rule_ids", []),
             slack_configured=bool(getattr(tenant, "slack_webhook_url", "")),
             retention_days=getattr(tenant, "retention_days", 0),
+        )
+
+    @router.get(
+        "/checks/{check_id}/remediation", response_model=RemediationPlanOut
+    )
+    def get_remediation_plan(
+        check_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> RemediationPlanOut:
+        """The fix list for one compliance check.
+
+        Any member of the tenant can read it — the people who act on a
+        remediation plan are usually the operations staff, not the owner.
+        The lookup is tenant-scoped, so another tenant's plan is a 404.
+        """
+        from fastapi import HTTPException, status
+
+        g = gw()
+        plan = g.repo.get_remediation_plan_for_check(check_id, auth.tenant_id)
+        if plan is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="not found"
+            )
+        return RemediationPlanOut(
+            plan_id=plan.plan_id,
+            check_id=plan.check_id,
+            document_id=plan.document_id,
+            items=[
+                RemediationItemOut(
+                    rule_id=i.rule_id,
+                    title=i.title,
+                    action=i.action,
+                    blocking=i.blocking,
+                    estimated_minutes=i.estimated_minutes,
+                    severity=i.severity,
+                )
+                for i in plan.items
+            ],
+            total_estimated_minutes=plan.total_estimated_minutes,
+            used_fixture=plan.used_fixture,
+            created_at=_iso(plan.created_at),
         )
 
     # -----------------------------------------------------------------------

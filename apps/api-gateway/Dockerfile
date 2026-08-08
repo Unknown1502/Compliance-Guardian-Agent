@@ -22,6 +22,7 @@ COPY services/compliance-agent/compliance_agent/ /app/compliance_agent/
 COPY services/escalation-service/escalation_service/ /app/escalation_service/
 COPY services/orchestrator/orchestrator/ /app/orchestrator/
 COPY services/reporting-agent/reporting_agent/ /app/reporting_agent/
+COPY services/remediation-agent/remediation_agent/ /app/remediation_agent/
 COPY rulesets/ /app/rulesets/
 
 ENV RULESETS_ROOT=/app/rulesets

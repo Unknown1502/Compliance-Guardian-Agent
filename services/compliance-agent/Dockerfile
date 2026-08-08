@@ -15,6 +15,9 @@ COPY services/compliance-agent/requirements.txt /app/requirements.txt
 RUN pip install -r /app/requirements.txt
 
 COPY services/compliance-agent/compliance_agent/ /app/compliance_agent/
+# The compliance service generates the remediation plan immediately after
+# writing its verdict, so this package ships with it.
+COPY services/remediation-agent/remediation_agent/ /app/remediation_agent/
 COPY rulesets/ /app/rulesets/
 
 ENV RULESETS_ROOT=/app/rulesets

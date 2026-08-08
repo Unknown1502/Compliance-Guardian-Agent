@@ -379,3 +379,34 @@ export async function fetchTenantAdminOverview(
 ): Promise<TenantAdminOverview> {
   return jsonOrThrow(await authedFetch(session, "/api/admin/overview"));
 }
+
+// --- Remediation -----------------------------------------------------------
+
+export interface RemediationItem {
+  rule_id: string;
+  title: string;
+  action: string;
+  blocking: boolean;
+  estimated_minutes: number;
+  severity: string;
+}
+
+export interface RemediationPlan {
+  plan_id: string;
+  check_id: string;
+  document_id: string;
+  items: RemediationItem[];
+  total_estimated_minutes: number;
+  used_fixture: boolean;
+  created_at: string;
+}
+
+/** Returns null when no plan exists yet (a clean check, or one still running). */
+export async function fetchRemediationPlan(
+  session: Session,
+  checkId: string,
+): Promise<RemediationPlan | null> {
+  const res = await authedFetch(session, `/api/checks/${checkId}/remediation`);
+  if (res.status === 404) return null;
+  return jsonOrThrow(res);
+}

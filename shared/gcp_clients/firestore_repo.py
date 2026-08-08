@@ -28,6 +28,7 @@ COLLECTION_TENANTS = "tenants"
 COLLECTION_DOCUMENTS = "documents"
 COLLECTION_CHECKS = "compliance_checks"
 COLLECTION_TASKS = "tasks"
+COLLECTION_REMEDIATION = "remediation_plans"
 COLLECTION_USERS = "users"
 COLLECTION_API_KEYS = "api_keys"
 
@@ -297,3 +298,39 @@ class FirestoreRepo:
             return updated
 
         return _txn(db.transaction())
+
+    # -- remediation plans --------------------------------------------------
+
+    def upsert_remediation_plan(self, plan) -> None:
+        """Write a plan. The id is deterministic per check, so a redelivered
+        task overwrites its own plan instead of creating a duplicate."""
+        self._db.collection(COLLECTION_REMEDIATION).document(plan.plan_id).set(
+            plan.model_dump(mode="json")
+        )
+
+    def get_remediation_plan_for_check(self, check_id: str, tenant_id: str):
+        """The plan for one check, or None. Tenant-scoped like every read here:
+        a plan belonging to another tenant is indistinguishable from absent."""
+        from schema_validators import RemediationPlan
+
+        snaps = (
+            self._db.collection(COLLECTION_REMEDIATION)
+            .where("check_id", "==", check_id)
+            .where("tenant_id", "==", tenant_id)
+            .limit(1)
+            .stream()
+        )
+        for snap in snaps:
+            return RemediationPlan.model_validate(snap.to_dict())
+        return None
+
+    def list_remediation_plans(self, tenant_id: str, limit: int = 100) -> list:
+        from schema_validators import RemediationPlan
+
+        snaps = (
+            self._db.collection(COLLECTION_REMEDIATION)
+            .where("tenant_id", "==", tenant_id)
+            .limit(limit)
+            .stream()
+        )
+        return [RemediationPlan.model_validate(s.to_dict()) for s in snaps]

@@ -215,6 +215,51 @@ class ComplianceCheck(StrictModel):
 
 
 # ---------------------------------------------------------------------------
+# Firestore: remediation plans (one per compliance check)
+# ---------------------------------------------------------------------------
+
+
+class RemediationItem(StrictModel):
+    """One concrete thing a business should do about one failed rule.
+
+    Deliberately actionable rather than descriptive: a compliance check tells
+    a provider what is wrong, and this tells them what to do about it. The
+    rule_id ties every item back to a real rule in the ruleset, so an item
+    can never float free of the citation that justifies it.
+    """
+
+    rule_id: str = Field(min_length=1)
+    title: str = Field(min_length=1, max_length=200)
+    action: str = Field(min_length=1, max_length=2000, description="What to actually do")
+    blocking: bool = Field(
+        default=False,
+        description="True when this must be fixed before the document can be relied on",
+    )
+    estimated_minutes: int = Field(default=15, ge=1, le=10080)
+    severity: str = Field(default="medium")
+
+
+class RemediationPlan(StrictModel):
+    """The ordered set of fixes for one compliance check."""
+
+    plan_id: str = Field(min_length=1)
+    check_id: str = Field(min_length=1)
+    document_id: str = Field(min_length=1)
+    tenant_id: str = Field(min_length=1)
+    items: list[RemediationItem] = Field(default_factory=list)
+    gemini_metadata: GeminiCallMetadata | None = None
+    used_fixture: bool = Field(
+        default=False,
+        description="True when items were derived without a live model call",
+    )
+    created_at: datetime = Field(default_factory=utcnow)
+
+    @property
+    def total_estimated_minutes(self) -> int:
+        return sum(i.estimated_minutes for i in self.items)
+
+
+# ---------------------------------------------------------------------------
 # BigQuery: audit_logs (append-only)
 # ---------------------------------------------------------------------------
 

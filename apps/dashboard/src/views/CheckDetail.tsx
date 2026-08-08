@@ -29,6 +29,7 @@ import { DecisionBadge, VerdictPill } from "../components/Badges";
 import { Button } from "../components/ui/Button";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { CardSkeleton } from "../components/ui/Skeleton";
+import { RemediationChecklist } from "../components/RemediationChecklist";
 import type { ComplianceCheck, DocumentRecord, DocumentContent } from "../types";
 import { cn } from "../lib/cn";
 
@@ -369,6 +370,14 @@ export function CheckDetail() {
               <span className="eyebrow">Overall justification</span>
               <p className="mt-1.5 text-[13px] leading-relaxed text-ink-2">{check.justification}</p>
             </div>
+
+            {/* What to fix. Sits directly under the findings because that is
+                the question a provider has the moment they read them. */}
+            {checkId && (
+              <div className="border-t border-line px-5 py-4">
+                <RemediationChecklist checkId={checkId} />
+              </div>
+            )}
 
             {/* Assignment */}
             <div className="border-t border-line px-5 py-4">

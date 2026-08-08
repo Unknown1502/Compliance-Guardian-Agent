@@ -125,6 +125,38 @@ def check(
         ) from exc
 
     c = outcome.check
+
+    # Remediation runs here as well as in the inline dispatcher, because these
+    # are the two real execution paths: inline for local dev, this service for
+    # CG_DISPATCH_MODE=cloud (which is what production runs). Wiring only the
+    # inline one would mean the fix list never appears for a real customer.
+    #
+    # It runs for ANY failed or uncertain rule, not just escalated checks, and
+    # can never fail the check: the verdict is the product's guarantee, the fix
+    # list is help layered on top.
+    try:
+        from remediation_agent.planner import build_remediation_plan
+
+        extract = ""
+        try:
+            doc = deps["repo"].get_document(req.document_id, req.tenant_id)
+            extract = str(doc.extracted_fields)[:2000]
+        except Exception:
+            logger.warning("no extract for %s; planning without it", req.document_id)
+
+        build_remediation_plan(
+            check=c,
+            repo=deps["repo"],
+            gemini=deps["gemini"],
+            auditor=deps["auditor"],
+            rulesets_root=RULESETS_ROOT,
+            document_extract=extract,
+        )
+    except Exception:
+        logger.exception(
+            "remediation planning failed for check %s (verdict unaffected)", c.check_id
+        )
+
     return CheckResponse(
         check_id=c.check_id,
         document_id=c.document_id,
