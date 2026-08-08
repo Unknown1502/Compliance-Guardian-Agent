@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from analytics import aggregate_period
+from analytics import (
+    aggregate_period,
+    all_time_top_violations,
+    weekly_trend,
+)
 
 
 class _Snap:
@@ -180,3 +184,159 @@ class TestAggregatePeriod:
         )
         assert stats["period_start"] == start.isoformat()
         assert stats["period_end"] == end.isoformat()
+
+
+# ---------------------------------------------------------------------------
+# Trend analytics
+# ---------------------------------------------------------------------------
+
+NOW = datetime(2026, 8, 7, 12, 0, tzinfo=timezone.utc)
+
+
+def _check_at(when: datetime, decision: str = "escalated", citations=None) -> dict:
+    """A check stamped at a specific time, for bucketing tests."""
+    return {
+        "tenant_id": "tenant-a",
+        "decision": decision,
+        "citations": citations if citations is not None else [],
+        "created_at": when.isoformat(),
+    }
+
+
+class CountingFirestore(FakeFirestore):
+    """FakeFirestore that records how many queries were issued."""
+
+    def __init__(self, checks):
+        super().__init__(checks)
+        self.stream_calls = 0
+
+    def stream(self):
+        self.stream_calls += 1
+        return super().stream()
+
+
+class TestWeeklyTrend:
+    def test_returns_requested_number_of_weeks(self):
+        buckets = weekly_trend(
+            FakeFirestore([]), tenant_id="tenant-a", weeks=4, now=NOW
+        )
+        assert len(buckets) == 4
+
+    def test_buckets_ordered_oldest_first(self):
+        buckets = weekly_trend(
+            FakeFirestore([]), tenant_id="tenant-a", weeks=3, now=NOW
+        )
+        starts = [b["week_start"] for b in buckets]
+        assert starts == sorted(starts)
+
+    def test_empty_tenant_returns_all_zero_buckets(self):
+        buckets = weekly_trend(
+            FakeFirestore([]), tenant_id="tenant-a", weeks=2, now=NOW
+        )
+        assert all(b["total_checks"] == 0 for b in buckets)
+
+    def test_buckets_are_contiguous_and_seven_days_wide(self):
+        buckets = weekly_trend(
+            FakeFirestore([]), tenant_id="tenant-a", weeks=3, now=NOW
+        )
+        for b in buckets:
+            start = datetime.fromisoformat(b["week_start"])
+            end = datetime.fromisoformat(b["week_end"])
+            assert (end - start).days == 7
+        # Each bucket begins exactly where the previous one ended.
+        for earlier, later in zip(buckets, buckets[1:]):
+            assert earlier["week_end"] == later["week_start"]
+        # The newest bucket ends at the reference instant.
+        assert buckets[-1]["week_end"] == NOW.isoformat()
+
+    def test_check_lands_in_the_week_it_belongs_to(self):
+        """A check 10 days old belongs to the second-newest of 3 weeks."""
+        checks = [_check_at(NOW - timedelta(days=10))]
+        buckets = weekly_trend(
+            CountingFirestore(checks), tenant_id="tenant-a", weeks=3, now=NOW
+        )
+        totals = [b["total_checks"] for b in buckets]
+        assert totals == [0, 1, 0]
+
+    def test_checks_are_distributed_across_their_own_weeks(self):
+        checks = [
+            _check_at(NOW - timedelta(days=1)),   # newest week
+            _check_at(NOW - timedelta(days=2)),   # newest week
+            _check_at(NOW - timedelta(days=9)),   # middle week
+            _check_at(NOW - timedelta(days=17)),  # oldest week
+        ]
+        buckets = weekly_trend(
+            FakeFirestore(checks), tenant_id="tenant-a", weeks=3, now=NOW
+        )
+        assert [b["total_checks"] for b in buckets] == [1, 1, 2]
+
+    def test_checks_outside_the_window_are_excluded(self):
+        checks = [
+            _check_at(NOW - timedelta(days=3)),    # inside
+            _check_at(NOW - timedelta(days=400)),  # far older than the window
+            _check_at(NOW + timedelta(days=5)),    # in the future
+        ]
+        buckets = weekly_trend(
+            FakeFirestore(checks), tenant_id="tenant-a", weeks=2, now=NOW
+        )
+        assert sum(b["total_checks"] for b in buckets) == 1
+
+    def test_decision_mix_is_per_bucket(self):
+        checks = [
+            _check_at(NOW - timedelta(days=1), "auto_approved"),
+            _check_at(NOW - timedelta(days=2), "rejected"),
+            _check_at(NOW - timedelta(days=9), "escalated"),
+        ]
+        buckets = weekly_trend(
+            FakeFirestore(checks), tenant_id="tenant-a", weeks=2, now=NOW
+        )
+        older, newer = buckets
+        assert older["escalated"] == 1 and older["total_checks"] == 1
+        assert newer["auto_approved"] == 1 and newer["rejected"] == 1
+
+    def test_uses_a_single_query_regardless_of_week_count(self):
+        """One range query, bucketed in memory -- not one query per week.
+
+        The per-week shape would cost 12 Firestore round trips by default to
+        answer what one range query already covers.
+        """
+        db = CountingFirestore([])
+        weekly_trend(db, tenant_id="tenant-a", weeks=12, now=NOW)
+        assert db.stream_calls == 1
+
+    def test_stored_datetime_created_at_still_buckets_correctly(self):
+        """Older records may hold a datetime rather than an ISO string."""
+        raw = _check_at(NOW - timedelta(days=3))
+        raw["created_at"] = NOW - timedelta(days=3)  # datetime, not str
+        buckets = weekly_trend(
+            FakeFirestore([raw]), tenant_id="tenant-a", weeks=2, now=NOW
+        )
+        assert sum(b["total_checks"] for b in buckets) == 1
+
+
+class TestAllTimeTopViolations:
+    def test_ranks_by_frequency_and_respects_limit(self):
+        checks = [
+            _check_at(NOW, citations=["rule_a"]),
+            _check_at(NOW, citations=["rule_a"]),
+            _check_at(NOW, citations=["rule_b"]),
+            _check_at(NOW, citations=["rule_c"]),
+        ]
+        top = all_time_top_violations(
+            FakeFirestore(checks), tenant_id="tenant-a", limit=2
+        )
+        assert len(top) == 2
+        assert top[0] == {"rule_id": "rule_a", "count": 2}
+
+    def test_empty_tenant_returns_empty_list(self):
+        assert all_time_top_violations(FakeFirestore([]), tenant_id="tenant-a") == []
+
+    def test_default_limit_caps_the_list(self):
+        checks = [_check_at(NOW, citations=[f"rule_{i}"]) for i in range(25)]
+        top = all_time_top_violations(FakeFirestore(checks), tenant_id="tenant-a")
+        assert len(top) == 10
+
+    def test_counts_every_citation_on_a_multi_citation_check(self):
+        checks = [_check_at(NOW, citations=["rule_a", "rule_b"])]
+        top = all_time_top_violations(FakeFirestore(checks), tenant_id="tenant-a")
+        assert {t["rule_id"]: t["count"] for t in top} == {"rule_a": 1, "rule_b": 1}
