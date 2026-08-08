@@ -19,10 +19,15 @@ export function DecisionBreakdown({
   escalated: number;
   rejected: number;
 }) {
+  // The design system's status tokens (tailwind.config.js → colors.status),
+  // matching TrendsView. These previously drifted to hand-picked hexes that
+  // fail palette validation on the lightness band and normal-vision floor,
+  // and two different greens across one product reads as carelessness in a
+  // tool whose whole pitch is auditability.
   const segments: Segment[] = [
-    { label: "Approved", count: approved, color: "#0ca30c" },
-    { label: "Escalated", count: escalated, color: "#fab219" },
-    { label: "Rejected", count: rejected, color: "#d03b3b" },
+    { label: "Approved", count: approved, color: "#16A34A" },
+    { label: "Escalated", count: escalated, color: "#F59E0B" },
+    { label: "Rejected", count: rejected, color: "#DC2626" },
   ];
   const total = Math.max(1, approved + escalated + rejected);
 

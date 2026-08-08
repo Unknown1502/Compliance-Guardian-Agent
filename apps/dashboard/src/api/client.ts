@@ -324,3 +324,28 @@ export async function assignCheck(
 export async function getReviewQueue(session: Session): Promise<ComplianceCheck[]> {
   return jsonOrThrow(await authedFetch(session, "/api/compliance/queue"));
 }
+
+// --- Analytics -------------------------------------------------------------
+
+export interface WeekBucket {
+  week_start: string;
+  week_end: string;
+  total_checks: number;
+  auto_approved: number;
+  escalated: number;
+  rejected: number;
+  top_failing_rule_ids: string[];
+}
+
+export interface TrendsResponse {
+  tenant_id: string;
+  weeks: WeekBucket[];
+  top_violations: { rule_id: string; count: number }[];
+}
+
+export async function fetchTrends(
+  session: Session,
+  weeks = 12,
+): Promise<TrendsResponse> {
+  return jsonOrThrow(await authedFetch(session, `/api/analytics/trends?weeks=${weeks}`));
+}

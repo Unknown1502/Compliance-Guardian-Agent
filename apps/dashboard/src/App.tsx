@@ -11,6 +11,7 @@ import { UploadView } from "./views/UploadView";
 import { CheckDetail } from "./views/CheckDetail";
 import { AuditLog } from "./views/AuditLog";
 import { ReportsView } from "./views/ReportsView";
+import { TrendsView } from "./views/TrendsView";
 import { BillingView } from "./views/BillingView";
 import { RulesetsView } from "./views/RulesetsView";
 import { SettingsView } from "./views/SettingsView";
@@ -65,6 +66,7 @@ function Gate() {
         <Route path="checks/:checkId" element={<CheckDetail />} />
         <Route path="audit" element={<AuditLog />} />
         <Route path="reports" element={<ReportsView />} />
+        <Route path="trends" element={<TrendsView />} />
         <Route path="rulesets" element={<RulesetsView />} />
         <Route path="billing" element={<BillingView />} />
         <Route path="team" element={<TeamView />} />

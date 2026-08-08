@@ -16,6 +16,7 @@ import {
   X,
   ShieldCheck,
   ChevronDown,
+  TrendingUp,
 } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { PageTransition } from "./ui/PageTransition";
@@ -35,6 +36,7 @@ const GROUPS = [
     items: [
       { to: "/audit", label: "Audit log", icon: ScrollText },
       { to: "/reports", label: "Reports", icon: FileBarChart2 },
+      { to: "/trends", label: "Trends", icon: TrendingUp },
     ],
   },
   {
