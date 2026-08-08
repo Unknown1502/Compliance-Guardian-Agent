@@ -219,6 +219,15 @@ class FirestoreRepo:
             check.model_dump(mode="json")
         )
 
+    def list_checks(self, tenant_id: str, limit: int = 200) -> list[ComplianceCheck]:
+        """All checks for one tenant, regardless of decision."""
+        q = (
+            self._db.collection(COLLECTION_CHECKS)
+            .where(filter=firestore.FieldFilter("tenant_id", "==", tenant_id))
+            .limit(limit)
+        )
+        return [ComplianceCheck.model_validate(s.to_dict()) for s in q.stream()]
+
     def list_escalated_checks(self, tenant_id: str, limit: int = 200) -> list[ComplianceCheck]:
         """Checks still awaiting a human decision, for the review queue."""
         q = (

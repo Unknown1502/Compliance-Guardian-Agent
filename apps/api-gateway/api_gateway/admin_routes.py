@@ -36,6 +36,7 @@ from auth_middleware import (
     require_platform_admin,
     require_role,
 )
+from api_gateway.composition import RULESETS_ROOT
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
@@ -119,6 +120,60 @@ class PlatformOverview(BaseModel):
     signups_last_7d: int
     signups_last_30d: int
     tenants: list[PlatformTenantRow]
+
+
+
+class PlatformDocumentRow(BaseModel):
+    tenant_id: str
+    tenant_name: str
+    document_id: str
+    filename: str
+    status: str
+    created_at: str
+    risk_score: int | None = None
+    decision: str | None = None
+    citations: list[str] = []
+
+
+class PlatformReviewRow(BaseModel):
+    tenant_id: str
+    tenant_name: str
+    check_id: str
+    document_id: str
+    risk_score: int
+    citations: list[str]
+    assigned_to: str | None
+    comments: int
+    created_at: str
+    age_hours: float
+
+
+class AgentHealth(BaseModel):
+    """Derived from the audit trail, which records every agent success and
+    failure. Latency and queue depth are NOT recorded anywhere, so they are
+    reported as unavailable rather than estimated."""
+
+    agent: str
+    succeeded: int
+    failed: int
+    success_rate: float | None
+    last_seen: str | None
+    latency_ms: None = None
+    queue_depth: None = None
+
+
+class ServiceStatus(BaseModel):
+    service: str
+    status: str  # healthy | degraded | unavailable | unknown
+    detail: str
+
+
+class PlatformSecurityEvent(BaseModel):
+    created_at: str
+    tenant_id: str
+    actor: str
+    action: str
+    category: str
 
 
 # ---------------------------------------------------------------------------
@@ -386,6 +441,330 @@ def build_admin_router(gw) -> APIRouter:
         )
         events = [dict(r) for r in job.result()]
         return {"count": len(events), "events": events}
+
+    # -----------------------------------------------------------------------
+    # Platform: documents, reviews, agents, compliance, security, system.
+    # Everything below is computed from data the product actually stores. Where
+    # a metric genuinely is not recorded anywhere (latency, queue depth,
+    # managed-service internals), it is reported as unavailable instead of
+    # being estimated — a fabricated ops number is worse than a blank.
+    # -----------------------------------------------------------------------
+
+    @router.get("/platform/documents", response_model=list[PlatformDocumentRow])
+    def platform_documents(
+        limit: int = Query(default=100, ge=1, le=500),
+        auth: AuthContext = Depends(require_platform_admin),
+    ) -> list[PlatformDocumentRow]:
+        """Documents across every tenant, newest first."""
+        g = gw()
+        _audit_platform_access(g, auth, "platform.documents_viewed", {"limit": limit})
+
+        rows: list[PlatformDocumentRow] = []
+        for t in g.repo.list_all_tenants(limit=_MAX_TENANTS_SCANNED):
+            docs = g.repo.list_documents(t.tenant_id, limit=200)
+            checks = {c.document_id: c for c in g.repo.list_checks(t.tenant_id, limit=200)}
+            for d in docs:
+                chk = checks.get(d.document_id)
+                rows.append(
+                    PlatformDocumentRow(
+                        tenant_id=t.tenant_id,
+                        tenant_name=t.name,
+                        document_id=d.document_id,
+                        filename=getattr(d, "filename", "") or "",
+                        status=getattr(d.status, "value", str(d.status)),
+                        created_at=_iso(d.created_at),
+                        risk_score=chk.risk_score if chk else None,
+                        decision=getattr(chk.decision, "value", str(chk.decision)) if chk else None,
+                        citations=list(chk.citations) if chk else [],
+                    )
+                )
+        rows.sort(key=lambda r: r.created_at, reverse=True)
+        return rows[:limit]
+
+    @router.get("/platform/reviews", response_model=list[PlatformReviewRow])
+    def platform_reviews(
+        auth: AuthContext = Depends(require_platform_admin),
+    ) -> list[PlatformReviewRow]:
+        """Open escalations across every tenant, highest risk first."""
+        g = gw()
+        _audit_platform_access(g, auth, "platform.reviews_viewed", {})
+
+        now = datetime.now(timezone.utc)
+        rows: list[PlatformReviewRow] = []
+        for t in g.repo.list_all_tenants(limit=_MAX_TENANTS_SCANNED):
+            for c in g.repo.list_escalated_checks(t.tenant_id, limit=200):
+                created = c.created_at if isinstance(c.created_at, datetime) else now
+                rows.append(
+                    PlatformReviewRow(
+                        tenant_id=t.tenant_id,
+                        tenant_name=t.name,
+                        check_id=c.check_id,
+                        document_id=c.document_id,
+                        risk_score=c.risk_score,
+                        citations=list(c.citations),
+                        assigned_to=getattr(c, "assigned_to", None),
+                        comments=len(getattr(c, "comments", None) or []),
+                        created_at=_iso(c.created_at),
+                        age_hours=round((now - created).total_seconds() / 3600, 1),
+                    )
+                )
+        rows.sort(key=lambda r: r.risk_score, reverse=True)
+        return rows
+
+    @router.get("/platform/agents", response_model=list[AgentHealth])
+    def platform_agents(
+        auth: AuthContext = Depends(require_platform_admin),
+    ) -> list[AgentHealth]:
+        """Agent success/failure from the audit trail.
+
+        Every agent writes a success action and a distinct failure action, so
+        success rate is a real measurement, not a guess. Latency and queue
+        depth are not recorded and stay null.
+        """
+        from gcp_clients import audit_dataset, audit_table, project_id
+
+        from google.cloud import bigquery
+
+        g = gw()
+        _audit_platform_access(g, auth, "platform.agents_viewed", {})
+
+        table = f"{project_id()}.{audit_dataset()}.{audit_table()}"
+        query = (
+            f"SELECT actor, action, COUNT(*) AS n, MAX(created_at) AS last_seen "  # noqa: S608
+            f"FROM `{table}` GROUP BY actor, action"
+        )
+        stats: dict[str, dict] = {}
+        for r in g.bq.query(query).result():
+            actor = str(r["actor"])
+            if not any(k in actor for k in ("agent", "orchestrator", "service")):
+                continue
+            entry = stats.setdefault(
+                actor, {"succeeded": 0, "failed": 0, "last_seen": None}
+            )
+            action = str(r["action"])
+            n = int(r["n"])
+            if "fail" in action:
+                entry["failed"] += n
+            else:
+                entry["succeeded"] += n
+            seen = _iso(r["last_seen"])
+            if entry["last_seen"] is None or seen > entry["last_seen"]:
+                entry["last_seen"] = seen
+
+        out: list[AgentHealth] = []
+        for actor, e in sorted(stats.items()):
+            total = e["succeeded"] + e["failed"]
+            out.append(
+                AgentHealth(
+                    agent=actor,
+                    succeeded=e["succeeded"],
+                    failed=e["failed"],
+                    success_rate=round(e["succeeded"] / total, 4) if total else None,
+                    last_seen=e["last_seen"],
+                )
+            )
+        return out
+
+    @router.get("/platform/compliance")
+    def platform_compliance(
+        auth: AuthContext = Depends(require_platform_admin),
+    ) -> dict:
+        """Rule and ruleset intelligence across the platform.
+
+        Rulesets are read from the repository files that actually drive
+        evaluation, so this cannot drift from what the engine uses.
+        """
+        from pathlib import Path as _Path
+
+        from schema_validators import load_ruleset_file
+
+        g = gw()
+        _audit_platform_access(g, auth, "platform.compliance_viewed", {})
+
+        rule_hits: dict[str, int] = {}
+        risk_buckets = {"low": 0, "medium": 0, "high": 0}
+        by_tenant_risk: list[dict] = []
+        jurisdictions: dict[str, int] = {}
+
+        for t in g.repo.list_all_tenants(limit=_MAX_TENANTS_SCANNED):
+            jurisdictions[t.jurisdiction] = jurisdictions.get(t.jurisdiction, 0) + 1
+            checks = g.repo.list_checks(t.tenant_id, limit=500)
+            if not checks:
+                continue
+            scores = [c.risk_score for c in checks]
+            for s in scores:
+                if s >= 60:
+                    risk_buckets["high"] += 1
+                elif s >= 30:
+                    risk_buckets["medium"] += 1
+                else:
+                    risk_buckets["low"] += 1
+            for c in checks:
+                for cite in c.citations:
+                    rule_hits[cite] = rule_hits.get(cite, 0) + 1
+            by_tenant_risk.append(
+                {
+                    "tenant_id": t.tenant_id,
+                    "name": t.name,
+                    "checks": len(checks),
+                    "avg_risk": round(sum(scores) / len(scores), 1),
+                }
+            )
+
+        by_tenant_risk.sort(key=lambda r: r["avg_risk"], reverse=True)
+
+        rulesets: list[dict] = []
+        root = _Path(RULESETS_ROOT)
+        if root.is_dir():
+            for path in sorted(root.glob("*/*.yaml")):
+                try:
+                    rs = load_ruleset_file(path)
+                except Exception:
+                    continue
+                rulesets.append(
+                    {
+                        "industry": rs.industry,
+                        "jurisdiction": rs.jurisdiction,
+                        "version": rs.rule_set_version,
+                        "rules": len(rs.rules),
+                    }
+                )
+
+        return {
+            "risk_distribution": risk_buckets,
+            "top_rules": sorted(
+                [{"rule_id": k, "hits": v} for k, v in rule_hits.items()],
+                key=lambda r: r["hits"],
+                reverse=True,
+            )[:20],
+            "highest_risk_tenants": by_tenant_risk[:20],
+            "jurisdictions": jurisdictions,
+            "rulesets": rulesets,
+        }
+
+    @router.get("/platform/security", response_model=list[PlatformSecurityEvent])
+    def platform_security(
+        limit: int = Query(default=200, ge=1, le=500),
+        auth: AuthContext = Depends(require_platform_admin),
+    ) -> list[PlatformSecurityEvent]:
+        """Security-relevant events, drawn from the same append-only trail.
+
+        Only actions the system genuinely records are surfaced. Nothing here
+        is inferred, and no secret ever appears: the trail stores action names
+        and identifiers, never credentials.
+        """
+        from gcp_clients import audit_dataset, audit_table, project_id
+
+        from google.cloud import bigquery
+
+        g = gw()
+        _audit_platform_access(g, auth, "platform.security_viewed", {"limit": limit})
+
+        table = f"{project_id()}.{audit_dataset()}.{audit_table()}"
+        query = (
+            f"SELECT created_at, tenant_id, actor, action FROM `{table}` "  # noqa: S608
+            f"WHERE action LIKE '%fail%' OR action LIKE '%denied%' "
+            f"OR action LIKE '%revoked%' OR action LIKE '%api_key%' "
+            f"OR action LIKE '%platform.%' OR action LIKE '%team.%' "
+            f"OR action LIKE '%settings.%' "
+            f"ORDER BY created_at DESC LIMIT @limit"
+        )
+        job = g.bq.query(
+            query,
+            job_config=bigquery.QueryJobConfig(
+                query_parameters=[bigquery.ScalarQueryParameter("limit", "INT64", limit)]
+            ),
+        )
+
+        def categorize(action: str) -> str:
+            if "fail" in action or "denied" in action:
+                return "failure"
+            if "api_key" in action:
+                return "credential"
+            if action.startswith("platform."):
+                return "privileged access"
+            if action.startswith("team.") or action.startswith("settings."):
+                return "configuration"
+            return "other"
+
+        return [
+            PlatformSecurityEvent(
+                created_at=_iso(r["created_at"]),
+                tenant_id=str(r["tenant_id"]),
+                actor=str(r["actor"]),
+                action=str(r["action"]),
+                category=categorize(str(r["action"])),
+            )
+            for r in job.result()
+        ]
+
+    @router.get("/platform/system", response_model=list[ServiceStatus])
+    def platform_system(
+        auth: AuthContext = Depends(require_platform_admin),
+    ) -> list[ServiceStatus]:
+        """Dependency status, measured rather than assumed.
+
+        Firestore, BigQuery and Cloud Storage are probed with a real, cheap
+        call. Cloud Run agents, Cloud Tasks, Workflows and Scheduler are not
+        reachable from inside this request without extra IAM and the Monitoring
+        API, so they report 'unknown' with the reason stated — the spec's rule
+        is to show a metric as unavailable rather than fabricate it.
+        """
+        g = gw()
+        _audit_platform_access(g, auth, "platform.system_viewed", {})
+
+        out: list[ServiceStatus] = [
+            ServiceStatus(service="API Gateway", status="healthy", detail="serving this request")
+        ]
+
+        try:
+            next(iter(g.db.collection("tenants").limit(1).stream()), None)
+            out.append(ServiceStatus(service="Firestore", status="healthy", detail="read succeeded"))
+        except Exception as exc:
+            out.append(
+                ServiceStatus(service="Firestore", status="unavailable", detail=str(exc)[:160])
+            )
+
+        try:
+            from gcp_clients import audit_dataset, audit_table, project_id
+
+            table = f"{project_id()}.{audit_dataset()}.{audit_table()}"
+            next(iter(g.bq.query(f"SELECT 1 FROM `{table}` LIMIT 1").result()), None)  # noqa: S608
+            out.append(ServiceStatus(service="BigQuery", status="healthy", detail="query succeeded"))
+        except Exception as exc:
+            out.append(
+                ServiceStatus(service="BigQuery", status="unavailable", detail=str(exc)[:160])
+            )
+
+        try:
+            from gcp_clients import raw_docs_bucket
+
+            g.storage.bucket(raw_docs_bucket()).exists()
+            out.append(
+                ServiceStatus(service="Cloud Storage", status="healthy", detail="bucket reachable")
+            )
+        except Exception as exc:
+            out.append(
+                ServiceStatus(service="Cloud Storage", status="unavailable", detail=str(exc)[:160])
+            )
+
+        for name in (
+            "Ingestion Agent",
+            "Compliance Agent",
+            "Reporting Agent",
+            "Escalation Service",
+            "Cloud Tasks",
+            "Cloud Workflows",
+            "Cloud Scheduler",
+        ):
+            out.append(
+                ServiceStatus(
+                    service=name,
+                    status="unknown",
+                    detail="Metric unavailable - not measured from this service",
+                )
+            )
+        return out
 
     @router.get("/platform/whoami")
     def platform_whoami(auth: AuthContext = Depends(require_platform_admin)) -> dict:
