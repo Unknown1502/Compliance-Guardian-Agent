@@ -18,7 +18,7 @@ API Gateway (Cloud Run, FastAPI)      — all /api/* endpoints, Firebase Auth ve
   │                                     Compliance Agent  (Gemini reasoning + risk score)
   │
   ├─ Escalation Service               — transactional reviewer decisions
-  ├─ Reporting Agent                  — Gemini executive summary, HTML → GCS
+  ├─ Reporting Agent                  — Gemini executive summary, PDF + HTML → GCS
   │
   ├─ Firestore                        — live state (documents, checks, tasks)
   ├─ BigQuery (append-only)           — immutable audit trail + reports table
@@ -118,6 +118,18 @@ python scripts/demo_phase4.py
 | `STORAGE_EMULATOR_HOST` | Local | — | e.g. `http://localhost:4443` |
 | `RISK_ESCALATION_THRESHOLD` | No | `60` | Risk score (0-100) above which checks escalate to a human |
 | `CG_AUTH_DEV_MODE` | Local only | `0` | `1` → accept dev bearer tokens (no Firebase Auth emulator) |
+| `CG_REQUIRE_EMAIL_VERIFICATION` | No | `0` | `1` → refuse Firebase sessions whose email is unverified (403). Off by default: enabling it retroactively locks out accounts created before verification existed |
+| `CG_RL_AUTH_CAPACITY` | No | `5` | Signup burst allowance per client IP |
+| `CG_RL_AUTH_REFILL_PER_SEC` | No | `0.0083` | Signup refill rate (1 per 2 min) |
+| `CG_RL_EXPENSIVE_CAPACITY` | No | `20` | Burst for endpoints that spend money or call a third party (Gemini, BigQuery, Stripe, Slack, Firebase user creation) |
+| `CG_RL_EXPENSIVE_REFILL_PER_SEC` | No | `0.033` | Refill rate for the expensive tier (1 per 30 s) |
+| `CG_RL_STANDARD_CAPACITY` | No | `120` | Burst for ordinary authenticated reads/writes |
+| `CG_RL_STANDARD_REFILL_PER_SEC` | No | `2.0` | Refill rate for the standard tier |
+| `CG_RL_UPLOAD_CAPACITY` | No | `20` | Upload burst per tenant |
+| `CG_RL_UPLOAD_REFILL_PER_SEC` | No | `0.5` | Upload refill rate per tenant |
+| `CG_RL_BACKOFF_FREE_ATTEMPTS` | No | `3` | Failed auth attempts per account before backoff starts |
+| `CG_RL_BACKOFF_BASE_SECONDS` | No | `2.0` | First backoff delay; doubles per subsequent failure |
+| `CG_RL_BACKOFF_MAX_SECONDS` | No | `900` | Backoff ceiling — never a permanent lockout |
 | `CG_DISPATCH_MODE` | No | `inline` | `inline` = in-process (local); `cloud` = Cloud Tasks (deployed) |
 | `CG_CORS_ORIGINS` | No | `http://localhost:5173` | Comma-separated allowed CORS origins |
 | `INTERNAL_TASK_TOKEN` | No | — | Shared secret header for internal service-to-service calls |
@@ -130,7 +142,7 @@ python scripts/demo_phase4.py
 # All unit tests (hermetic — no emulators, no Gemini key needed)
 python -m pytest tests/unit -v
 
-# Expected: 83 passed
+# Expected: 280 passed
 ```
 
 ---
@@ -217,7 +229,7 @@ compliance-agent/
 │   ├── orchestrator/        Task lifecycle + Cloud Tasks dispatch
 │   ├── ingestion-agent/     Gemini field extraction
 │   ├── compliance-agent/    Gemini risk scoring + rule verdicts
-│   ├── reporting-agent/     Gemini executive summaries → GCS + BigQuery
+│   ├── reporting-agent/     Gemini executive summaries → PDF + HTML in GCS
 │   └── escalation-service/  Transactional reviewer decisions
 ├── shared/
 │   ├── auth_middleware/     Firebase JWT verification (+ dev mode)
@@ -231,7 +243,7 @@ compliance-agent/
 │   └── workflows/           Cloud Workflows YAML
 ├── rulesets/                Versioned compliance rule YAML files
 ├── scripts/                 seed.py + demo_phase2/3/4.py
-├── tests/unit/              83 hermetic unit tests
+├── tests/unit/             280 hermetic unit tests
 └── docker-compose.emulators.yml
 ```
 

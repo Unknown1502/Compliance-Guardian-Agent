@@ -103,5 +103,8 @@ export interface Session {
   tenantId: string;
   role: Role;
   email?: string;
+  /** Firebase has confirmed the user controls this address. True for dev
+   *  sessions and API-key callers, which have no mailbox to confirm. */
+  emailVerified: boolean;
   getToken: () => Promise<string>;
 }

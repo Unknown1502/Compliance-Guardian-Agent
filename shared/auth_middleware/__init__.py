@@ -50,9 +50,23 @@ VALID_ROLES = frozenset({"owner", "reviewer", "admin"})
 _DEV_MODE_ENV = "CG_AUTH_DEV_MODE"
 _DEV_PREFIX = "dev:"
 
+# When enabled, a Firebase session whose email is unverified is refused. Off by
+# default and deliberately so: turning it on retroactively locks out every
+# account that signed up before verification existed, which is a decision for
+# whoever runs the deployment, not a side effect of shipping this code.
+#
+# Firebase itself sends and validates the verification email, so there is no
+# code store or mail transport here — `email_verified` simply arrives as a
+# claim on the ID token we already verify.
+_REQUIRE_EMAIL_VERIFIED_ENV = "CG_REQUIRE_EMAIL_VERIFICATION"
+
 
 def _dev_mode_enabled() -> bool:
     return os.environ.get(_DEV_MODE_ENV) == "1"
+
+
+def _email_verification_required() -> bool:
+    return os.environ.get(_REQUIRE_EMAIL_VERIFIED_ENV) == "1"
 
 
 def _ensure_firebase_app() -> firebase_admin.App:
@@ -121,6 +135,10 @@ class AuthContext:
     tenant_id: str
     role: str
     email: str | None = None
+    # Whether Firebase has confirmed the caller controls this address.
+    # Defaults True so machine credentials (API keys) and dev tokens — which
+    # have no inbox to verify — are not treated as failed verifications.
+    email_verified: bool = True
 
 
 # Resolver injected by the composition root so this module stays free of a
@@ -204,11 +222,22 @@ def _verify_bearer_token(request: Request) -> AuthContext:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Token missing or invalid role claim",
         )
+
+    email_verified = bool(decoded.get("email_verified", False))
+    if _email_verification_required() and not email_verified:
+        # 403 rather than 401: the credential is valid, the account simply
+        # is not confirmed yet. A 401 would make clients retry the login.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Email address not verified. Check your inbox for the verification link.",
+        )
+
     return AuthContext(
         uid=decoded["uid"],
         tenant_id=tenant_id,
         role=role,
         email=decoded.get("email"),
+        email_verified=email_verified,
     )
 
 

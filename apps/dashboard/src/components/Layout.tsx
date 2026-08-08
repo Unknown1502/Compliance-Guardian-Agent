@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { PageTransition } from "./ui/PageTransition";
+import { VerifyEmailBanner } from "./VerifyEmailBanner";
 import { cn } from "../lib/cn";
 
 const GROUPS = [
@@ -202,6 +203,9 @@ export function Layout() {
         )}
       >
         <div className={cn(!isFullWidth && "mx-auto max-w-5xl")}>
+          {/* Sits above the routed view, not inside it, so it shows on every
+              page until the address is confirmed. */}
+          <VerifyEmailBanner />
           <AnimatePresence mode="wait">
             <PageTransition key={location.pathname}>
               <Outlet />

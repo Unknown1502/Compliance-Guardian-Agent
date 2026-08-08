@@ -15,6 +15,7 @@ import {
 } from "react";
 import {
   onAuthStateChanged,
+  sendEmailVerification,
   signInWithEmailAndPassword,
   signOut as fbSignOut,
 } from "firebase/auth";
@@ -28,6 +29,10 @@ interface AuthState {
   devSignIn: (tenantId: string, role: Role, uid: string) => void;
   firebaseSignIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
+  /** Ask Firebase to re-send the verification email to the signed-in user. */
+  resendVerification: () => Promise<void>;
+  /** Re-read the user from Firebase so a just-clicked link reflects immediately. */
+  refreshVerification: () => Promise<void>;
 }
 
 const AuthCtx = createContext<AuthState | undefined>(undefined);
@@ -74,6 +79,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           tenantId,
           role,
           email: user.email ?? undefined,
+          emailVerified: user.emailVerified,
           getToken: () => user.getIdToken(),
         });
       } else {
@@ -91,7 +97,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const firebaseSignIn = useCallback(async (email: string, password: string) => {
-    await signInWithEmailAndPassword(firebaseAuth(), email, password);
+    const cred = await signInWithEmailAndPassword(firebaseAuth(), email, password);
+    // Firebase sends this itself, so there is no mail transport or code store
+    // on our side. Failure is non-fatal: a bounced send must not block a
+    // sign-in the user has already completed correctly.
+    if (!cred.user.emailVerified) {
+      try {
+        await sendEmailVerification(cred.user);
+      } catch {
+        /* the user can retry from the banner */
+      }
+    }
+  }, []);
+
+  const resendVerification = useCallback(async () => {
+    const user = firebaseAuth().currentUser;
+    if (user && !user.emailVerified) await sendEmailVerification(user);
+  }, []);
+
+  const refreshVerification = useCallback(async () => {
+    const user = firebaseAuth().currentUser;
+    if (!user) return;
+    // reload() re-reads the account; without it the client keeps showing
+    // "unverified" until the ID token happens to refresh on its own.
+    await user.reload();
+    await user.getIdToken(true);
+    setSession((prev) =>
+      prev ? { ...prev, emailVerified: firebaseAuth().currentUser?.emailVerified ?? false } : prev,
+    );
   }, []);
 
   const signOut = useCallback(async () => {
@@ -104,8 +137,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ session, loading, devSignIn, firebaseSignIn, signOut }),
-    [session, loading, devSignIn, firebaseSignIn, signOut],
+    () => ({
+      session,
+      loading,
+      devSignIn,
+      firebaseSignIn,
+      signOut,
+      resendVerification,
+      refreshVerification,
+    }),
+    [
+      session,
+      loading,
+      devSignIn,
+      firebaseSignIn,
+      signOut,
+      resendVerification,
+      refreshVerification,
+    ],
   );
 
   return <AuthCtx.Provider value={value}>{children}</AuthCtx.Provider>;
@@ -121,6 +170,9 @@ function makeDevSession(claims: {
     uid: claims.uid,
     tenantId: claims.tenant_id,
     role: claims.role,
+    // A local dev identity has no mailbox to confirm; treating it as
+    // unverified would just wedge local development behind a banner.
+    emailVerified: true,
     getToken: async () => token,
   };
 }
