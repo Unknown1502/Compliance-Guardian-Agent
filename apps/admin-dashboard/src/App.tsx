@@ -9,6 +9,7 @@ import {
 } from "react-router-dom";
 import {
   Activity,
+  Banknote,
   Building2,
   FileText,
   UserCheck,
@@ -34,6 +35,7 @@ import {
   AuditSection,
   SecuritySection,
   SystemSection,
+  PaymentsSection,
   SettingsSection,
 } from "./sections";
 
@@ -49,6 +51,7 @@ const NAV = [
   { to: "/audit", label: "Audit log", icon: ScrollText },
   { to: "/security", label: "Security", icon: ShieldAlert },
   { to: "/system", label: "System", icon: Gauge },
+  { to: "/payments", label: "Payments", icon: Banknote },
   { to: "/settings", label: "Settings", icon: SettingsIcon },
 ];
 
@@ -301,6 +304,7 @@ function Shell() {
           <Route path="/audit" element={<AuditSection />} />
           <Route path="/security" element={<SecuritySection />} />
           <Route path="/system" element={<SystemSection />} />
+          <Route path="/payments" element={<PaymentsSection />} />
           <Route path="/settings" element={<SettingsSection />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

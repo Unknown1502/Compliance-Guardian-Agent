@@ -73,6 +73,7 @@ from schema_validators import (
 
 from api_gateway.admin_routes import build_admin_router
 from api_gateway.composition import RULESETS_ROOT, Gateway
+from api_gateway.payment_routes import build_payment_router
 from api_gateway.rate_limit import (
     BackoffRateLimiter,
     TokenBucketRateLimiter,
@@ -192,6 +193,18 @@ def gw() -> Gateway:
 # their own module because /api/platform/* is the only cross-tenant code in
 # the product and benefits from living in one auditable file.
 app.include_router(build_admin_router(gw), prefix="/api")
+
+# Razorpay / PayPal / offline payments. Stripe's routes stay below in this
+# file. Limiter enforcement is passed in rather than imported so those routes
+# draw from these same buckets instead of getting a second budget.
+app.include_router(
+    build_payment_router(
+        gw,
+        enforce_expensive=lambda key, what: _enforce(_expensive_limiter, key, what),
+        enforce_standard=lambda key, what: _enforce(_standard_limiter, key, what),
+    ),
+    prefix="/api",
+)
 
 
 # ---------------------------------------------------------------------------

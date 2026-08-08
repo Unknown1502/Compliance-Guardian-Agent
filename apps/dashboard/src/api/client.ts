@@ -132,6 +132,88 @@ export async function createCheckout(
   return jsonOrThrow(res);
 }
 
+/* --- Payments -------------------------------------------------------------
+ *
+ * Note what is never sent from here: an amount. The plan is a name; the
+ * server looks up the price. And nothing on this page can grant a plan —
+ * every call below ends in a server-side verification.
+ */
+
+export type Plan = "oneoff" | "subscription";
+
+export interface ProviderOption {
+  provider: "stripe" | "razorpay" | "paypal";
+  available: boolean;
+  amount_minor: number | null;
+  currency: string | null;
+}
+
+export async function getPaymentProviders(
+  session: Session,
+): Promise<{ oneoff: ProviderOption[]; subscription: ProviderOption[] }> {
+  return jsonOrThrow(await authedFetch(session, "/api/billing/providers"));
+}
+
+export async function createRazorpayOrder(
+  session: Session,
+  plan: Plan,
+): Promise<{ order_id: string; amount: number; currency: string; key_id: string }> {
+  const res = await authedFetch(session, "/api/billing/razorpay/order", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ plan }),
+  });
+  return jsonOrThrow(res);
+}
+
+export interface PaymentResult {
+  plan_tier: string;
+  provider: string;
+  reference: string;
+  amount_minor: number;
+  currency: string;
+}
+
+export async function verifyRazorpayPayment(
+  session: Session,
+  fields: {
+    razorpay_order_id: string;
+    razorpay_payment_id: string;
+    razorpay_signature: string;
+  },
+): Promise<PaymentResult> {
+  const res = await authedFetch(session, "/api/billing/razorpay/verify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(fields),
+  });
+  return jsonOrThrow(res);
+}
+
+export async function createPayPalOrder(
+  session: Session,
+  plan: Plan,
+): Promise<{ order_id: string; status: string; approve_url: string }> {
+  const res = await authedFetch(session, "/api/billing/paypal/order", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ plan }),
+  });
+  return jsonOrThrow(res);
+}
+
+export async function capturePayPalOrder(
+  session: Session,
+  orderId: string,
+): Promise<PaymentResult> {
+  const res = await authedFetch(session, "/api/billing/paypal/capture", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ order_id: orderId }),
+  });
+  return jsonOrThrow(res);
+}
+
 export async function getAuditLogs(
   session: Session,
 ): Promise<{ events: import("../types").AuditEvent[]; count: number }> {

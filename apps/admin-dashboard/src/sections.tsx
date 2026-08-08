@@ -826,6 +826,193 @@ export function SystemSection() {
 
 // ---------------------------------------------------------------- Settings
 
+/**
+ * Record a payment that happened outside any gateway — a bank transfer, a
+ * UPI payment, a cheque. The only place in this console that writes.
+ *
+ * Presented deliberately soberly: the operator is asserting that money
+ * arrived, and nothing here can verify that. The form states plainly that
+ * their name goes on the record, because that is the actual control.
+ */
+export function PaymentsSection() {
+  const { getToken, admin } = useAuth();
+  const overview = useData<Overview>(api.overview);
+  const [tenantId, setTenantId] = useState("");
+  const [plan, setPlan] = useState<"oneoff" | "subscription">("subscription");
+  const [amount, setAmount] = useState("");
+  const [currency, setCurrency] = useState("INR");
+  const [reference, setReference] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const tenants = overview.data?.tenants ?? [];
+  const selected = tenants.find((t) => t.tenant_id === tenantId);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    setResult(null);
+    try {
+      // Entered in major units because that is how a bank statement reads;
+      // converted here because the API is unambiguously minor units.
+      const minor = Math.round(Number(amount) * 100);
+      if (!Number.isFinite(minor) || minor <= 0) throw new Error("Enter an amount above zero.");
+      const r = await api.recordOfflinePayment(getToken, {
+        tenant_id: tenantId,
+        plan,
+        amount_minor: minor,
+        currency: currency.toUpperCase(),
+        reference: reference.trim(),
+      });
+      setResult(`${selected?.name ?? tenantId} is now on the ${r.plan_tier} plan.`);
+      setAmount("");
+      setReference("");
+      overview.reload();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const field = "w-full rounded border border-line bg-base px-2.5 py-1.5 text-sm outline-none focus:border-accent";
+  const label = "mb-1 block text-xs font-medium text-fg-dim";
+
+  return (
+    <div>
+      <Head
+        title="Payments"
+        sub="Record a payment received outside the payment gateways"
+      />
+
+      <Panel title="Record an offline payment">
+        <form onSubmit={submit} className="space-y-3 px-3 py-3">
+          <div>
+            <label className={label} htmlFor="tenant">
+              Workspace
+            </label>
+            <select
+              id="tenant"
+              className={field}
+              value={tenantId}
+              onChange={(e) => setTenantId(e.target.value)}
+              required
+            >
+              <option value="">Select a workspace…</option>
+              {tenants.map((t) => (
+                <option key={t.tenant_id} value={t.tenant_id}>
+                  {t.name} — {t.plan_tier}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className={label} htmlFor="plan">
+                Plan
+              </label>
+              <select
+                id="plan"
+                className={field}
+                value={plan}
+                onChange={(e) => setPlan(e.target.value as "oneoff" | "subscription")}
+              >
+                <option value="subscription">Unlimited (pro)</option>
+                <option value="oneoff">Single audit (starter)</option>
+              </select>
+            </div>
+            <div>
+              <label className={label} htmlFor="amount">
+                Amount received
+              </label>
+              <input
+                id="amount"
+                className={field}
+                type="number"
+                min="0.01"
+                step="0.01"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder="8300.00"
+                required
+              />
+            </div>
+            <div>
+              <label className={label} htmlFor="currency">
+                Currency
+              </label>
+              <input
+                id="currency"
+                className={field}
+                maxLength={3}
+                value={currency}
+                onChange={(e) => setCurrency(e.target.value)}
+                required
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className={label} htmlFor="reference">
+              Bank / UPI reference
+            </label>
+            <input
+              id="reference"
+              className={field}
+              value={reference}
+              onChange={(e) => setReference(e.target.value)}
+              placeholder="NEFT UTR, UPI transaction id, cheque number…"
+              required
+            />
+            <p className="mt-1 text-xs text-faint">
+              Copy it exactly from the statement. This is what a disputed charge is traced by.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-3 pt-1">
+            <button
+              type="submit"
+              disabled={busy || !tenantId}
+              className="rounded bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+            >
+              {busy ? "Recording…" : "Record payment"}
+            </button>
+            <span className="text-xs text-faint">
+              Recorded against <Mono dim>{admin?.email}</Mono> in the audit trail.
+            </span>
+          </div>
+
+          {result && <p className="text-sm text-ok">{result}</p>}
+          {error && <ErrorNote error={error} />}
+        </form>
+      </Panel>
+
+      <Panel className="mt-3" title="What this does and does not prove">
+        <ul className="space-y-2 px-3 py-3 text-sm text-muted">
+          <li>
+            <span className="text-fg-dim">Nothing here is verified.</span> Card, UPI and PayPal
+            payments taken through the product are confirmed by the provider directly to the
+            backend. This form has no such confirmation — it records your assertion that money
+            arrived, which is why your identity is attached to it.
+          </li>
+          <li>
+            <span className="text-fg-dim">The plan changes immediately.</span> Use it only after
+            the funds have actually cleared, not when a customer says a transfer is on its way.
+          </li>
+          <li>
+            <span className="text-fg-dim">It cannot be quietly undone.</span> The audit trail is
+            append-only, so a mistaken entry is corrected by a later entry, never by deleting this
+            one.
+          </li>
+        </ul>
+      </Panel>
+    </div>
+  );
+}
+
 export function SettingsSection() {
   const { admin } = useAuth();
   const compliance = useData<ComplianceIntel>(api.compliance);
@@ -890,8 +1077,9 @@ export function SettingsSection() {
         </ul>
       </Panel>
       <p className="mt-2 text-xs text-faint">
-        This console is read-only across tenants by design. Every request it makes is written to
-        the audit trail before data is returned.
+        This console reads across tenants and writes in exactly one place — recording an offline
+        payment under Payments. Everything else is read-only by design, and every request it makes
+        is written to the audit trail before data is returned.
       </p>
     </div>
   );

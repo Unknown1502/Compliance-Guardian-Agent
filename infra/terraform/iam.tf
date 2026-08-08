@@ -264,6 +264,54 @@ resource "google_secret_manager_secret_iam_member" "gateway_reads_stripe_webhook
   member    = "serviceAccount:${google_service_account.cg_gateway.email}"
 }
 
+# ---------------------------------------------------------------------------
+# Secret Manager — Razorpay and PayPal. Same shape and the same reasoning as
+# the Stripe secrets above, for the same single consumer (the gateway).
+#
+# These exist because Stripe live mode requires a registered business, which
+# Razorpay does not. Each provider is gated by its own variable so switching
+# one on does not require the other to be configured — an unpopulated secret
+# attached to the container is a revision that will not start, and that would
+# take down the whole gateway rather than one payment method.
+#
+#   printf %s "$RAZORPAY_KEY_ID"         | gcloud secrets versions add cg-razorpay-key-id --data-file=-
+#   printf %s "$RAZORPAY_KEY_SECRET"     | gcloud secrets versions add cg-razorpay-key-secret --data-file=-
+#   printf %s "$RAZORPAY_WEBHOOK_SECRET" | gcloud secrets versions add cg-razorpay-webhook-secret --data-file=-
+#   printf %s "$PAYPAL_CLIENT_ID"        | gcloud secrets versions add cg-paypal-client-id --data-file=-
+#   printf %s "$PAYPAL_SECRET"           | gcloud secrets versions add cg-paypal-secret --data-file=-
+#
+# printf, not `echo -n`: cmd.exe's echo has no -n and writes the flag itself
+# into the secret. That has already happened once on this project.
+# ---------------------------------------------------------------------------
+
+locals {
+  payment_secret_ids = [
+    "cg-razorpay-key-id",
+    "cg-razorpay-key-secret",
+    "cg-razorpay-webhook-secret",
+    "cg-paypal-client-id",
+    "cg-paypal-secret",
+  ]
+}
+
+resource "google_secret_manager_secret" "payment_secrets" {
+  for_each  = toset(local.payment_secret_ids)
+  secret_id = each.value
+
+  replication {
+    auto {}
+  }
+
+  depends_on = [google_project_service.apis]
+}
+
+resource "google_secret_manager_secret_iam_member" "gateway_reads_payment_secrets" {
+  for_each  = google_secret_manager_secret.payment_secrets
+  secret_id = each.value.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.cg_gateway.email}"
+}
+
 # See reader_job_user above — jobs.create must be project-scoped.
 resource "google_project_iam_member" "gateway_job_user" {
   project = var.project_id

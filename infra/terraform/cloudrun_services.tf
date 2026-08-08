@@ -129,6 +129,93 @@ resource "google_cloud_run_v2_service" "api_gateway" {
         name  = "CG_DASHBOARD_BASE_URL"
         value = "https://${var.project_id}.web.app"
       }
+
+      # --- Razorpay / PayPal -------------------------------------------
+      # Appended at the end for the same positional reason documented above:
+      # inserting these higher up would renumber every later env block and
+      # make an apply look like the Gemini and Stripe secrets were being
+      # rewritten.
+      env {
+        name  = "PAYPAL_LIVE"
+        value = var.paypal_live ? "1" : "0"
+      }
+      env {
+        name  = "PAYPAL_RETURN_URL"
+        value = "https://${var.project_id}.web.app/billing"
+      }
+      env {
+        name  = "PAYPAL_CANCEL_URL"
+        value = "https://${var.project_id}.web.app/billing?status=cancelled"
+      }
+      # Prices in minor units. Absent keys fall back to the defaults compiled
+      # into shared/payments, so this map only needs entries that differ.
+      dynamic "env" {
+        for_each = var.payment_prices
+        content {
+          name  = "CG_PRICE_${upper(env.key)}"
+          value = env.value
+        }
+      }
+      dynamic "env" {
+        for_each = var.enable_razorpay ? [1] : []
+        content {
+          name = "RAZORPAY_KEY_ID"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.payment_secrets["cg-razorpay-key-id"].secret_id
+              version = "latest"
+            }
+          }
+        }
+      }
+      dynamic "env" {
+        for_each = var.enable_razorpay ? [1] : []
+        content {
+          name = "RAZORPAY_KEY_SECRET"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.payment_secrets["cg-razorpay-key-secret"].secret_id
+              version = "latest"
+            }
+          }
+        }
+      }
+      dynamic "env" {
+        for_each = var.enable_razorpay ? [1] : []
+        content {
+          name = "RAZORPAY_WEBHOOK_SECRET"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.payment_secrets["cg-razorpay-webhook-secret"].secret_id
+              version = "latest"
+            }
+          }
+        }
+      }
+      dynamic "env" {
+        for_each = var.enable_paypal ? [1] : []
+        content {
+          name = "PAYPAL_CLIENT_ID"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.payment_secrets["cg-paypal-client-id"].secret_id
+              version = "latest"
+            }
+          }
+        }
+      }
+      dynamic "env" {
+        for_each = var.enable_paypal ? [1] : []
+        content {
+          name = "PAYPAL_SECRET"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.payment_secrets["cg-paypal-secret"].secret_id
+              version = "latest"
+            }
+          }
+        }
+      }
     }
 
     scaling {

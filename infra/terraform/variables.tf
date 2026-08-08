@@ -96,3 +96,52 @@ variable "stripe_price_id_subscription" {
   type        = string
   default     = ""
 }
+
+variable "enable_razorpay" {
+  description = <<-EOT
+    Gates the Razorpay secret_key_ref env vars on the API gateway. Same
+    hazard as enable_billing: a secret with zero versions makes the Cloud Run
+    revision fail to start, taking down the whole gateway rather than one
+    payment method. Flip to true only after cg-razorpay-key-id,
+    cg-razorpay-key-secret and cg-razorpay-webhook-secret all have a version.
+
+    Independent of enable_billing on purpose — Razorpay exists precisely so
+    payments can go live before Stripe's business verification completes.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "enable_paypal" {
+  description = <<-EOT
+    Gates the PayPal secret_key_ref env vars on the API gateway. Requires
+    cg-paypal-client-id and cg-paypal-secret to have versions populated. See
+    enable_razorpay for the failure mode this prevents.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "paypal_live" {
+  description = <<-EOT
+    false uses PayPal's sandbox API, true uses live. Defaults to sandbox so a
+    misconfiguration cannot move real money. The credentials in Secret Manager
+    must match this setting — sandbox credentials against the live API simply
+    fail to authenticate.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "payment_prices" {
+  description = <<-EOT
+    Server-side prices in MINOR units (paise, cents), keyed as
+    "<provider>_<plan>", e.g. { razorpay_oneoff = "420000" }. Empty values
+    fall back to the defaults in shared/payments/__init__.py.
+
+    These are set here rather than in the frontend because a price the client
+    can name is a price the client can change.
+  EOT
+  type        = map(string)
+  default     = {}
+}

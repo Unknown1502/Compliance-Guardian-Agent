@@ -35,6 +35,38 @@ async function get<T>(getToken: TokenFn, path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/**
+ * The console's only write.
+ *
+ * Everything else here is a GET, and that is the design: a cross-tenant
+ * console that can alter customer records is a much bigger blast radius than
+ * one that cannot. This exception exists because a bank transfer that has
+ * already cleared is a real payment the product has to be able to honour,
+ * and there is no gateway callback to do it automatically.
+ *
+ * The safeguard is accountability, not cryptography: the backend records
+ * which operator did it and what reference they cited, in the append-only
+ * audit trail, before the plan changes.
+ */
+async function post<T>(getToken: TokenFn, path: string, body: unknown): Promise<T> {
+  const token = await getToken();
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      detail = (await res.json()).detail ?? detail;
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new ApiError(res.status, detail);
+  }
+  return res.json() as Promise<T>;
+}
+
 // -- shapes ----------------------------------------------------------------
 
 export interface WhoAmI {
@@ -162,4 +194,22 @@ export const api = {
   system: (t: TokenFn) => get<ServiceStatus[]>(t, "/api/platform/system"),
   audit: (t: TokenFn, limit = 200) =>
     get<{ count: number; events: AuditEvent[] }>(t, `/api/platform/audit?limit=${limit}`),
+  recordOfflinePayment: (t: TokenFn, body: OfflinePayment) =>
+    post<PaymentResult>(t, "/api/platform/payments/offline", body),
 };
+
+export interface OfflinePayment {
+  tenant_id: string;
+  plan: "oneoff" | "subscription";
+  amount_minor: number;
+  currency: string;
+  reference: string;
+}
+
+export interface PaymentResult {
+  plan_tier: string;
+  provider: string;
+  reference: string;
+  amount_minor: number;
+  currency: string;
+}
