@@ -739,29 +739,82 @@ def build_admin_router(gw) -> APIRouter:
         try:
             from gcp_clients import raw_docs_bucket
 
-            g.storage.bucket(raw_docs_bucket()).exists()
+            # Deliberately an OBJECT-level call. bucket.exists() needs
+            # storage.buckets.get, which the runtime service account does not
+            # hold (it has objectAdmin, by least privilege). Probing with
+            # exists() therefore returned 403 and reported Cloud Storage as
+            # unavailable while uploads were working perfectly — a false alarm
+            # that made the health page actively misleading. Listing one object
+            # exercises the permission the product actually depends on.
+            next(iter(g.storage.bucket(raw_docs_bucket()).list_blobs(max_results=1)), None)
             out.append(
-                ServiceStatus(service="Cloud Storage", status="healthy", detail="bucket reachable")
+                ServiceStatus(
+                    service="Cloud Storage", status="healthy", detail="object listing succeeded"
+                )
             )
         except Exception as exc:
             out.append(
                 ServiceStatus(service="Cloud Storage", status="unavailable", detail=str(exc)[:160])
             )
 
-        for name in (
-            "Ingestion Agent",
-            "Compliance Agent",
-            "Reporting Agent",
-            "Escalation Service",
-            "Cloud Tasks",
-            "Cloud Workflows",
-            "Cloud Scheduler",
-        ):
+        # Agent status from the audit trail rather than a probe. Each agent
+        # writes a distinct success and failure action, so recent activity is a
+        # real signal: failures present means degraded, successes only means
+        # healthy, silence means we genuinely do not know.
+        agent_actors = {
+            "Ingestion Agent": "ingestion-agent",
+            "Compliance Agent": "compliance-agent",
+            "Reporting Agent": "reporting-agent",
+            "Escalation Service": "escalation-service",
+        }
+        try:
+            from gcp_clients import audit_dataset, audit_table, project_id
+
+            table = f"{project_id()}.{audit_dataset()}.{audit_table()}"
+            rows = list(
+                g.bq.query(
+                    f"SELECT actor, "  # noqa: S608
+                    f"COUNTIF(action LIKE '%fail%') AS failed, "
+                    f"COUNTIF(action NOT LIKE '%fail%') AS ok, "
+                    f"MAX(created_at) AS last_seen "
+                    f"FROM `{table}` "
+                    f"WHERE created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR) "
+                    f"GROUP BY actor"
+                ).result()
+            )
+            recent = {str(r["actor"]): r for r in rows}
+        except Exception:
+            recent = {}
+
+        for label, actor in agent_actors.items():
+            r = recent.get(actor)
+            if r is None:
+                out.append(
+                    ServiceStatus(
+                        service=label,
+                        status="unknown",
+                        detail="No activity in the last 24h - nothing to measure",
+                    )
+                )
+                continue
+            failed = int(r["failed"] or 0)
+            ok = int(r["ok"] or 0)
+            if failed and ok:
+                status, detail = "degraded", f"{ok} succeeded, {failed} failed in 24h"
+            elif failed:
+                status, detail = "unavailable", f"{failed} failed, none succeeded in 24h"
+            else:
+                status, detail = "healthy", f"{ok} succeeded in 24h, no failures"
+            out.append(ServiceStatus(service=label, status=status, detail=detail))
+
+        # No data source reaches these from inside a request, and inventing a
+        # status for infrastructure is worse than admitting the gap.
+        for name in ("Cloud Tasks", "Cloud Workflows", "Cloud Scheduler"):
             out.append(
                 ServiceStatus(
                     service=name,
                     status="unknown",
-                    detail="Metric unavailable - not measured from this service",
+                    detail="Not measured - requires the Cloud Monitoring API",
                 )
             )
         return out
