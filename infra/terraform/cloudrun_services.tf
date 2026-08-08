@@ -111,6 +111,15 @@ resource "google_cloud_run_v2_service" "api_gateway" {
           }
         }
       }
+      # Appended at the END of this list on purpose. Cloud Run env blocks are
+      # positional, so inserting one mid-list makes Terraform renumber every
+      # entry after it — including the secret_key_ref blocks for the Gemini and
+      # Stripe secrets. The resulting plan reads like those secrets are being
+      # rewritten, which is unreviewable on a production apply.
+      env {
+        name  = "CG_REQUIRE_EMAIL_VERIFICATION"
+        value = var.require_email_verification ? "1" : "0"
+      }
     }
 
     scaling {

@@ -463,7 +463,19 @@ class InviteMemberRequest(StrictRequest):
 
 
 @app.get("/healthz")
+@app.get("/api/healthz")
 def healthz() -> dict:
+    """Liveness check, registered at two paths on purpose.
+
+    On Cloud Run, a request to bare `/healthz` is answered by the Google
+    frontend and never reaches this container — verified in production: the
+    reply carries no `server: Google Frontend` header and no trace context,
+    while `/healthz/` redirects normally and `/api/*` arrives fine. So the
+    externally reachable health check has to live under `/api`.
+
+    `/healthz` stays because it works everywhere the GFE is not in front —
+    local dev, docker-compose, and any future direct container probe.
+    """
     return {"status": "ok", "service": "api-gateway"}
 
 

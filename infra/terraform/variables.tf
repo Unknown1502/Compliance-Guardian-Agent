@@ -51,6 +51,20 @@ variable "enable_auth_dev_mode" {
   default     = false
 }
 
+variable "require_email_verification" {
+  description = <<-EOT
+    Refuse API requests from Firebase sessions whose email address has not
+    been verified (HTTP 403).
+
+    Defaults false because switching it on locks out every account created
+    before email verification existed, until each of those users clicks a
+    verification link. Turn it on deliberately, once you know who that
+    affects — not as a side effect of an unrelated apply.
+  EOT
+  type        = bool
+  default     = false
+}
+
 variable "enable_api_docs" {
   description = "Expose Swagger UI (/docs, /redoc, /openapi.json) on the public API gateway. Keep false in production — the API surface should not be publicly browsable."
   type        = bool
