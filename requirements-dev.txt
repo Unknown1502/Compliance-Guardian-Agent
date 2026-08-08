@@ -18,3 +18,7 @@ pytest>=8.2,<9
 cryptography>=50.0.0
 pyasn1>=0.6.4
 h2>=4.4.1
+
+# Report PDF rendering. Pure Python, so no cairo/pango/browser layer is
+# needed in the container image.
+reportlab>=4.2,<5

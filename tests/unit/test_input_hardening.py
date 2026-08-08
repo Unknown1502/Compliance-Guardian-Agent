@@ -239,3 +239,82 @@ class TestTrendsEndpoint:
         c, fake, _ = client
         fake.db = _EmptyFirestore()
         assert c.get("/api/analytics/trends?weeks=lots", headers=AUTH).status_code == 422
+
+
+class TestReportServing:
+    """GET /api/reports/{id} — PDF by default, HTML fallback, tenant-scoped."""
+
+    class _Blob:
+        def __init__(self, store, path):
+            self._store, self._path = store, path
+
+        def exists(self):
+            return self._path in self._store
+
+        def download_as_bytes(self):
+            return self._store[self._path]
+
+        def download_as_text(self):
+            return self._store[self._path].decode("utf-8")
+
+    class _Bucket:
+        def __init__(self, store):
+            self._store = store
+
+        def blob(self, path):
+            return TestReportServing._Blob(self._store, path)
+
+    class _Storage:
+        def __init__(self, store):
+            self.store = store
+
+        def bucket(self, _name):
+            return TestReportServing._Bucket(self.store)
+
+    def _with_objects(self, client, objects):
+        c, fake, _ = client
+        fake.storage = self._Storage(objects)
+        return c
+
+    def test_pdf_served_when_present(self, client, monkeypatch):
+        monkeypatch.setenv("GCS_BUCKET_REPORTS", "b")
+        c = self._with_objects(
+            client, {"tenant-a/rep-1/report.pdf": b"%PDF-1.4 fake", "tenant-a/rep-1/report.html": b"<p>hi</p>"}
+        )
+        r = c.get("/api/reports/rep-1", headers=AUTH)
+        assert r.status_code == 200
+        assert r.headers["content-type"] == "application/pdf"
+        assert r.content.startswith(b"%PDF-")
+
+    def test_falls_back_to_html_when_no_pdf(self, client, monkeypatch):
+        """Reports generated before PDF existed must still be readable."""
+        monkeypatch.setenv("GCS_BUCKET_REPORTS", "b")
+        c = self._with_objects(client, {"tenant-a/rep-1/report.html": b"<p>legacy</p>"})
+        r = c.get("/api/reports/rep-1", headers=AUTH)
+        assert r.status_code == 200
+        assert "text/html" in r.headers["content-type"]
+        assert "legacy" in r.text
+
+    def test_html_can_be_requested_explicitly(self, client, monkeypatch):
+        monkeypatch.setenv("GCS_BUCKET_REPORTS", "b")
+        c = self._with_objects(
+            client, {"tenant-a/rep-1/report.pdf": b"%PDF-1.4", "tenant-a/rep-1/report.html": b"<p>web</p>"}
+        )
+        r = c.get("/api/reports/rep-1?format=html", headers=AUTH)
+        assert "text/html" in r.headers["content-type"]
+
+    def test_unknown_format_rejected(self, client, monkeypatch):
+        monkeypatch.setenv("GCS_BUCKET_REPORTS", "b")
+        c = self._with_objects(client, {})
+        assert c.get("/api/reports/rep-1?format=exe", headers=AUTH).status_code == 422
+
+    def test_missing_report_is_404(self, client, monkeypatch):
+        monkeypatch.setenv("GCS_BUCKET_REPORTS", "b")
+        c = self._with_objects(client, {})
+        assert c.get("/api/reports/rep-1", headers=AUTH).status_code == 404
+
+    def test_another_tenants_report_is_not_reachable(self, client, monkeypatch):
+        """The blob path is built from the JWT, so tenant-b's object is invisible."""
+        monkeypatch.setenv("GCS_BUCKET_REPORTS", "b")
+        c = self._with_objects(client, {"tenant-b/rep-1/report.pdf": b"%PDF-1.4 secret"})
+        assert c.get("/api/reports/rep-1", headers=AUTH).status_code == 404

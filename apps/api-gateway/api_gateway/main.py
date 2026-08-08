@@ -48,7 +48,7 @@ from fastapi import (
     status,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from firebase_admin.auth import EmailAlreadyExistsError
 from gcp_clients import audit_dataset, audit_table, project_id
 from gcp_clients.firestore_repo import (
@@ -354,6 +354,8 @@ class ReportResponse(BaseModel):
     model_name: str
     model_version: str | None
     used_fixture: bool
+    # Empty when PDF rendering failed; the client then falls back to HTML.
+    pdf_ref: str = ""
 
 
 class CheckoutRequest(StrictRequest):
@@ -1105,22 +1107,49 @@ def create_report(
         model_name=outcome.model_name,
         model_version=outcome.model_version,
         used_fixture=outcome.used_fixture,
+        pdf_ref=getattr(outcome, "pdf_ref", ""),
     )
 
 
-@app.get("/api/reports/{report_id}", response_class=HTMLResponse)
+@app.get("/api/reports/{report_id}")
 def get_report(
-    report_id: str = id_path(), auth: AuthContext = Depends(require_auth)
-) -> HTMLResponse:
+    report_id: str = id_path(),
+    format: str = Query(default="pdf", pattern="^(pdf|html)$"),
+    auth: AuthContext = Depends(require_auth),
+):
+    """Serve a rendered report, PDF by default.
+
+    PDF is what an auditor actually files, so it is the default. HTML remains
+    reachable two ways: explicitly via ?format=html, and automatically for any
+    report generated before PDF rendering existed (or where PDF rendering
+    failed) — those tenants keep a readable report rather than a 404.
+
+    The blob path is built from the JWT's tenant_id and a pattern-validated
+    report_id, so one tenant cannot address another's object.
+    """
     from gcp_clients import reports_bucket
 
     g = gw()
-    blob_path = f"{auth.tenant_id}/{report_id}/report.html"
     bucket = g.storage.bucket(reports_bucket())
-    blob = bucket.blob(blob_path)
-    if not blob.exists():
+    prefix = f"{auth.tenant_id}/{report_id}"
+
+    if format == "pdf":
+        pdf_blob = bucket.blob(f"{prefix}/report.pdf")
+        if pdf_blob.exists():
+            return Response(
+                content=pdf_blob.download_as_bytes(),
+                media_type="application/pdf",
+                headers={
+                    # inline so the browser's viewer opens it; the dashboard
+                    # still offers an explicit download.
+                    "Content-Disposition": f'inline; filename="compliance-report-{report_id}.pdf"'
+                },
+            )
+
+    html_blob = bucket.blob(f"{prefix}/report.html")
+    if not html_blob.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="report not found")
-    return HTMLResponse(content=blob.download_as_text())
+    return HTMLResponse(content=html_blob.download_as_text())
 
 
 # ---------------------------------------------------------------------------

@@ -8,6 +8,7 @@ import {
   AlertTriangle,
   XCircle,
   ClipboardList,
+  Download,
 } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { useToast } from "../context/ToastContext";
@@ -72,7 +73,12 @@ export function ReportsView() {
   // The report endpoint requires a bearer token, so a plain <a href> would
   // navigate without one and render the API's "Missing bearer token" error.
   // Fetch it with the token, then hand the browser a blob URL instead.
-  const openReport = async (reportId: string) => {
+  //
+  // The response is a PDF when one exists and HTML when it doesn't (reports
+  // generated before PDF rendering existed), so the content type is read off
+  // the response rather than assumed — assuming HTML would hand the browser
+  // a PDF mislabelled as markup and render binary as text.
+  const openReport = async (reportId: string, download = false) => {
     if (!session) return;
     setOpeningId(reportId);
     try {
@@ -84,11 +90,21 @@ export function ReportsView() {
         const body = await res.json().catch(() => ({}));
         throw new ApiError(res.status, body.detail ?? res.statusText);
       }
-      const url = URL.createObjectURL(
-        new Blob([await res.text()], { type: "text/html" }),
-      );
-      window.open(url, "_blank", "noopener,noreferrer");
-      // Give the new tab time to load before releasing the object URL.
+      const contentType = res.headers.get("content-type") ?? "application/pdf";
+      const isPdf = contentType.includes("application/pdf");
+      const url = URL.createObjectURL(await res.blob());
+
+      if (download) {
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `compliance-report-${reportId}.${isPdf ? "pdf" : "html"}`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } else {
+        window.open(url, "_blank", "noopener,noreferrer");
+      }
+      // Give the new tab or the download time to start before releasing it.
       window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
     } catch (err) {
       const msg = (err as Error).message;
@@ -178,15 +194,26 @@ export function ReportsView() {
                 title={`${report.period_start.split("T")[0]} – ${report.period_end.split("T")[0]}`}
                 subtitle={<span className="font-mono-num">{report.report_id}</span>}
                 action={
-                  <button
-                    type="button"
-                    onClick={() => openReport(report.report_id)}
-                    disabled={openingId === report.report_id}
-                    className="inline-flex items-center gap-1 text-sm font-medium text-brand-600 transition-colors hover:text-brand-700 disabled:opacity-50 dark:text-brand-400"
-                  >
-                    {openingId === report.report_id ? "Opening…" : "View full HTML"}
-                    <ExternalLink size={13} />
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => openReport(report.report_id, true)}
+                      disabled={openingId === report.report_id}
+                      className="inline-flex items-center gap-1 text-sm font-medium text-slate-600 transition-colors hover:text-slate-900 disabled:opacity-50 dark:text-slate-400 dark:hover:text-slate-100"
+                    >
+                      Download
+                      <Download size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openReport(report.report_id)}
+                      disabled={openingId === report.report_id}
+                      className="inline-flex items-center gap-1 text-sm font-medium text-brand-600 transition-colors hover:text-brand-700 disabled:opacity-50 dark:text-brand-400"
+                    >
+                      {openingId === report.report_id ? "Opening…" : "Open report"}
+                      <ExternalLink size={13} />
+                    </button>
+                  </div>
                 }
               />
 
