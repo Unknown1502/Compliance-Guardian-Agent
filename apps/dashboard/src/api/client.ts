@@ -349,3 +349,33 @@ export async function fetchTrends(
 ): Promise<TrendsResponse> {
   return jsonOrThrow(await authedFetch(session, `/api/analytics/trends?weeks=${weeks}`));
 }
+
+// --- Tenant admin ----------------------------------------------------------
+
+export interface TenantAdminOverview {
+  tenant_id: string;
+  name: string;
+  industry: string;
+  jurisdiction: string;
+  plan_tier: string;
+  created_at: string;
+  documents_total: number;
+  documents_by_status: Record<string, number>;
+  checks_total: number;
+  checks_auto_approved: number;
+  checks_escalated: number;
+  checks_rejected: number;
+  open_escalations: number;
+  members_total: number;
+  members_by_role: Record<string, number>;
+  api_keys_active: number;
+  top_failing_rules: string[];
+  slack_configured: boolean;
+  retention_days: number;
+}
+
+export async function fetchTenantAdminOverview(
+  session: Session,
+): Promise<TenantAdminOverview> {
+  return jsonOrThrow(await authedFetch(session, "/api/admin/overview"));
+}

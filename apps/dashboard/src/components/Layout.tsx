@@ -43,6 +43,7 @@ const GROUPS = [
   {
     label: "Workspace",
     items: [
+      { to: "/workspace", label: "Overview", icon: ShieldCheck },
       { to: "/rulesets", label: "Rulesets", icon: BookMarked },
       { to: "/team", label: "Team", icon: Users },
       { to: "/billing", label: "Billing", icon: CreditCard },
