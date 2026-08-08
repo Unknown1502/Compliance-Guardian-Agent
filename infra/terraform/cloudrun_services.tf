@@ -120,6 +120,13 @@ resource "google_cloud_run_v2_service" "api_gateway" {
         name  = "CG_REQUIRE_EMAIL_VERIFICATION"
         value = var.require_email_verification ? "1" : "0"
       }
+      # Base URL used to build the "Review" deep link in Slack escalation
+      # alerts. This existed on the live service but not in Terraform, so an
+      # apply would have silently deleted it and broken those links.
+      env {
+        name  = "CG_DASHBOARD_BASE_URL"
+        value = "https://${var.project_id}.web.app"
+      }
     }
 
     scaling {
