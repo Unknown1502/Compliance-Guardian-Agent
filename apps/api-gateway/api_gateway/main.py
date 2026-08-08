@@ -71,6 +71,7 @@ from schema_validators import (
     load_ruleset,
 )
 
+from api_gateway.admin_routes import build_admin_router
 from api_gateway.composition import RULESETS_ROOT, Gateway
 from api_gateway.rate_limit import (
     BackoffRateLimiter,
@@ -185,6 +186,12 @@ def gw() -> Gateway:
     if _gateway is None:
         _gateway = Gateway()
     return _gateway
+
+
+# Tenant admin (/api/admin/*) and platform admin (/api/platform/*). Kept in
+# their own module because /api/platform/* is the only cross-tenant code in
+# the product and benefits from living in one auditable file.
+app.include_router(build_admin_router(gw), prefix="/api")
 
 
 # ---------------------------------------------------------------------------

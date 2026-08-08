@@ -272,6 +272,48 @@ def require_auth(request: Request) -> AuthContext:
     return _verify_bearer_token(request)
 
 
+# Platform administrators — the operator of the whole service, not a role
+# inside any one tenant.
+#
+# Deliberately NOT a member of VALID_ROLES. Roles are handed out through
+# POST /api/team, so a role named "founder" or "platform_admin" could be
+# minted by any tenant owner inviting themselves. This allowlist lives in the
+# environment instead: granting it requires deploy access to the service, and
+# there is no code path in the product that can add to it.
+_PLATFORM_ADMIN_ENV = "CG_PLATFORM_ADMIN_UIDS"
+
+
+def _platform_admin_principals() -> frozenset[str]:
+    """UIDs and/or email addresses permitted to use the platform console."""
+    raw = os.environ.get(_PLATFORM_ADMIN_ENV, "")
+    return frozenset(p.strip().lower() for p in raw.split(",") if p.strip())
+
+
+def is_platform_admin(auth: AuthContext) -> bool:
+    allowed = _platform_admin_principals()
+    if not allowed:
+        return False  # unset means nobody, never everybody
+    candidates = {auth.uid.lower()}
+    if auth.email:
+        candidates.add(auth.email.lower())
+    return bool(candidates & allowed)
+
+
+def require_platform_admin(auth: AuthContext = Depends(require_auth)) -> AuthContext:
+    """Gate for cross-tenant endpoints.
+
+    Returns 404, not 403: a 403 confirms the platform API exists and that the
+    caller found a real route, which is free reconnaissance for anyone probing
+    a tenant account against it. To a non-admin these routes are simply absent.
+    """
+    if not is_platform_admin(auth):
+        logger.warning(
+            "platform admin access denied for uid=%s tenant=%s", auth.uid, auth.tenant_id
+        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    return auth
+
+
 def require_role(*allowed: str):
     """FastAPI dependency factory: authenticated AND role in `allowed`.
 
