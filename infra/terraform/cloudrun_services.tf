@@ -55,7 +55,9 @@ resource "google_cloud_run_v2_service" "api_gateway" {
         # Firebase Hosting default domain + localhost for local dev. Add a
         # custom domain here too if one is ever mapped in Firebase Hosting.
         name  = "CG_CORS_ORIGINS"
-        value = "https://${var.project_id}.web.app,http://localhost:5173"
+        # Tenant dashboard, operator console (separate Hosting site so admin
+        # code never ships in the customer bundle), and both local dev ports.
+        value = "https://${var.project_id}.web.app,https://cg-guardian-admin.web.app,http://localhost:5173,http://localhost:5273"
       }
       env {
         name = "GEMINI_API_KEY"

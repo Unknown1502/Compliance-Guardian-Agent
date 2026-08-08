@@ -1,0 +1,8 @@
+{
+  "projects": { "default": "cg-guardian-9856" },
+  "targets": {
+    "cg-guardian-9856": {
+      "hosting": { "admin": ["cg-guardian-admin"] }
+    }
+  }
+}

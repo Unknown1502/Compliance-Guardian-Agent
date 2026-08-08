@@ -14,6 +14,8 @@ build/
 node_modules/
 apps/dashboard/dist/
 apps/dashboard/.firebase/
+apps/admin-console/dist/
+apps/admin-console/.firebase/
 
 # Env & secrets — never commit
 .env
