@@ -52,12 +52,29 @@ resource "google_cloud_run_v2_service" "api_gateway" {
         value = var.enable_api_docs ? "1" : "0"
       }
       env {
-        # Firebase Hosting default domain + localhost for local dev. Add a
-        # custom domain here too if one is ever mapped in Firebase Hosting.
-        name  = "CG_CORS_ORIGINS"
-        # Tenant dashboard, operator console (separate Hosting site so admin
-        # code never ships in the customer bundle), and both local dev ports.
-        value = "https://${var.project_id}.web.app,https://cg-guardian-admin.web.app,http://localhost:5173,http://localhost:5273"
+        # Tenant dashboard, operator console, and both local dev ports (5173
+        # customer, 5174 admin — see each app's vite.config.ts).
+        #
+        # The console origin comes from a variable, not a literal: its Hosting
+        # site ID is deliberately neutral and uncommitted, and the guessed
+        # value that used to sit here ("cg-guardian-admin.web.app") did not
+        # match the real site, so an apply replaced the correct live value and
+        # CORS-blocked the whole console.
+        name = "CG_CORS_ORIGINS"
+        value = join(",", compact([
+          "https://${var.project_id}.web.app",
+          var.admin_console_origin,
+          "http://localhost:5173",
+          "http://localhost:5174",
+        ]))
+      }
+      env {
+        # Cross-tenant access allowlist. Must be declared here even when
+        # empty: an env var the live service needs but Terraform does not
+        # know about is an env var the next apply deletes. That is exactly
+        # how every platform admin lost the operator console once already.
+        name  = "CG_PLATFORM_ADMIN_UIDS"
+        value = var.platform_admin_uids
       }
       env {
         name = "GEMINI_API_KEY"

@@ -97,6 +97,42 @@ variable "stripe_price_id_subscription" {
   default     = ""
 }
 
+variable "platform_admin_uids" {
+  description = <<-EOT
+    Comma-separated UIDs or emails allowed to reach /api/platform/*, written
+    to CG_PLATFORM_ADMIN_UIDS on the gateway.
+
+    This lives in Terraform because it previously did not: it was set once by
+    hand with `gcloud run services update` and was therefore invisible to the
+    configuration. The next apply rewrote the container's env list to match
+    config, silently dropping it, and every platform admin lost access to the
+    operator console at once. Anything the live service needs must be here,
+    or an apply will eventually delete it.
+
+    Empty means nobody is a platform admin — closed by default, which is the
+    right failure mode for a cross-tenant surface.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "admin_console_origin" {
+  description = <<-EOT
+    Origin of the operator console, added to CG_CORS_ORIGINS.
+
+    A variable rather than a literal because the console's Hosting site ID is
+    deliberately neutral and uncommitted (see apps/admin-dashboard/scripts/
+    apply-target.mjs) — hardcoding it here would put it in the repository,
+    which is the one thing that choice exists to prevent. Terraform used to
+    carry a guessed value that did not match the real site, so the console's
+    browser calls were blocked by CORS after an apply.
+
+    Empty simply omits it; the customer dashboard is unaffected.
+  EOT
+  type        = string
+  default     = ""
+}
+
 variable "enable_razorpay" {
   description = <<-EOT
     Gates the Razorpay secret_key_ref env vars on the API gateway. Same
