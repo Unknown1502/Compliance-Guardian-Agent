@@ -126,13 +126,25 @@ def build_payment_router(
     """
     router = APIRouter(tags=["payments"])
 
-    def _apply_payment(payment, *, actor: str, caller_tenant: str | None) -> PaymentResult:
+    def _apply_payment(payment, *, confirmed_by: str, caller_tenant: str | None) -> PaymentResult:
         """Upgrade a tenant from a payment the provider has confirmed.
 
         caller_tenant is the authenticated tenant on interactive routes and
         None on webhooks (where there is no caller, only a signature). When
         present it must match: a signature proves a payment is genuine, not
         that the person replaying it owns the tenant it belongs to.
+
+        confirmed_by names the path that confirmed the payment ("checkout",
+        "webhook", "capture") and is recorded in after_state — NOT used as the
+        audit actor. The two paths race by design: on a real Rs 1 live test
+        the webhook landed 17 seconds before the browser callback, and both
+        confirmed the same payment. Because the audit event id is derived from
+        (tenant_id, actor, action, dedup_key), a per-path actor made those two
+        confirmations two separate events, so one purchase appeared in the
+        trail as two. Not a double charge and not a security issue, but for a
+        product whose central claim is a trustworthy audit trail, an entry
+        that reads as "bought twice" is a defect. Keying the actor to the
+        provider collapses them into the one event that actually happened.
         """
         from payments import price_for
 
@@ -179,7 +191,8 @@ def build_payment_router(
         g.repo.upsert_tenant(tenant)
         g.auditor.log(
             tenant_id=payment.tenant_id,
-            actor=actor,
+            # Provider, not path — see confirmed_by above.
+            actor=payment.provider,
             action="billing.subscribed" if payment.plan == "subscription" else "billing.purchased",
             # Keyed on the provider's own reference, so a replayed webhook or
             # a double-submitted callback collapses to one audit event.
@@ -191,6 +204,7 @@ def build_payment_router(
                 "reference": payment.reference,
                 "amount_minor": payment.amount_minor,
                 "currency": payment.currency,
+                "confirmed_by": confirmed_by,
             },
         )
         return PaymentResult(
@@ -323,7 +337,7 @@ def build_payment_router(
                 status_code=status.HTTP_502_BAD_GATEWAY, detail="could not confirm the payment"
             ) from exc
 
-        return _apply_payment(payment, actor="razorpay-checkout", caller_tenant=auth.tenant_id)
+        return _apply_payment(payment, confirmed_by="checkout", caller_tenant=auth.tenant_id)
 
     @router.post("/billing/razorpay/webhook", status_code=status.HTTP_200_OK)
     async def razorpay_webhook(request: Request) -> dict:
@@ -384,7 +398,7 @@ def build_payment_router(
             logger.warning("razorpay webhook payment %s carries no tenant", payment.reference)
             return {"received": True, "handled": False}
 
-        _apply_payment(payment, actor="razorpay-webhook", caller_tenant=None)
+        _apply_payment(payment, confirmed_by="webhook", caller_tenant=None)
         return {"received": True, "handled": True}
 
     # -- PayPal ------------------------------------------------------------
@@ -450,6 +464,6 @@ def build_payment_router(
                 status_code=status.HTTP_502_BAD_GATEWAY, detail="could not confirm the payment"
             ) from exc
 
-        return _apply_payment(payment, actor="paypal-capture", caller_tenant=auth.tenant_id)
+        return _apply_payment(payment, confirmed_by="capture", caller_tenant=auth.tenant_id)
 
     return router

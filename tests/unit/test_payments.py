@@ -459,6 +459,60 @@ class TestRazorpayWebhook:
         assert r.status_code == 400
         assert gateway.repo.get_tenant("tenant-b").plan_tier is PlanTier.FREE
 
+    def test_webhook_and_checkout_produce_one_audit_event_not_two(
+        self, client, gateway, no_network
+    ):
+        """Both paths confirm the same payment; the trail must show one purchase.
+
+        On a real Rs 1 live payment the webhook landed 17 seconds before the
+        browser callback and both confirmed the same payment id. With a
+        per-path audit actor that became two billing.purchased rows for one
+        purchase — not a double charge, but a trail that reads as "bought
+        twice" is a defect in the one thing this product sells.
+        """
+        import payments
+
+        captured = {
+            "id": "pay_race",
+            "status": "captured",
+            "order_id": "order_race",
+            "amount": ONEOFF_INR,
+            "currency": "INR",
+            "notes": {"tenant_id": "tenant-a", "plan": "oneoff"},
+        }
+        no_network.setattr(payments, "_get_json", lambda url, *, headers: captured)
+
+        payload = json.dumps(
+            {
+                "event": "payment.captured",
+                "payload": {"payment": {"entity": captured}},
+            }
+        ).encode()
+        client.post(
+            "/api/billing/razorpay/webhook",
+            content=payload,
+            headers={"x-razorpay-signature": _webhook_sig(payload)},
+        )
+        client.post(
+            "/api/billing/razorpay/verify",
+            json={
+                "razorpay_order_id": "order_race",
+                "razorpay_payment_id": "pay_race",
+                "razorpay_signature": _checkout_sig("order_race", "pay_race"),
+            },
+            headers=_hdr(),
+        )
+
+        purchases = [e for e in gateway.auditor.events if e["action"] == "billing.purchased"]
+        assert len(purchases) == 2, "both paths should still be attempted"
+        # Same event identity: same tenant, actor, action and dedup key, so
+        # BigQuery's insertId dedup collapses them to one row.
+        identity = {(e["tenant_id"], e["actor"], e["action"], e["dedup_key"]) for e in purchases}
+        assert len(identity) == 1, f"one payment produced {len(identity)} distinct audit events"
+        assert all(e["actor"] == "razorpay" for e in purchases)
+        # The path is still recorded, just not as the actor.
+        assert {e["after_state"]["confirmed_by"] for e in purchases} == {"webhook", "checkout"}
+
     def test_unrelated_event_is_acknowledged_not_acted_on(self, client, gateway):
         payload = json.dumps({"event": "payment.failed", "payload": {}}).encode()
         r = client.post(
