@@ -93,7 +93,7 @@ function LoginScreen() {
               autoComplete="username"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="mt-1 w-full border border-line bg-panel px-2.5 py-2 text-sm focus:border-accent focus:outline-none"
+              className="mt-1 w-full rounded-lg border border-line bg-panel px-2.5 py-2 text-sm shadow-soft focus:border-accent focus:outline-none"
             />
           </label>
           <label className="block">
@@ -104,13 +104,13 @@ function LoginScreen() {
               autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="mt-1 w-full border border-line bg-panel px-2.5 py-2 text-sm focus:border-accent focus:outline-none"
+              className="mt-1 w-full rounded-lg border border-line bg-panel px-2.5 py-2 text-sm shadow-soft focus:border-accent focus:outline-none"
             />
           </label>
           <button
             type="submit"
             disabled={busy}
-            className="w-full bg-accent-dim px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-accent disabled:opacity-50"
+            className="w-full rounded-lg bg-accent px-3 py-2 text-sm font-medium text-white shadow-soft transition-colors hover:bg-accent-dim disabled:opacity-50"
           >
             {busy ? "Signing in…" : "Sign in"}
           </button>
@@ -140,7 +140,7 @@ function AccessDenied() {
         <div className="mt-5 flex items-center gap-3">
           <button
             onClick={() => signOut()}
-            className="border border-line px-3 py-1.5 text-sm text-fg-dim hover:bg-raised"
+            className="rounded-lg border border-line px-3 py-1.5 text-sm text-fg-dim transition-colors hover:bg-raised"
           >
             Sign out
           </button>
@@ -171,11 +171,11 @@ function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void 
   if (!open) return null;
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 pt-[15vh]"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-fg/25 pt-[15vh]"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md border border-line bg-panel"
+        className="w-full max-w-md overflow-hidden rounded-xl border border-line bg-panel shadow-soft-md"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 border-b border-line px-3 py-2">

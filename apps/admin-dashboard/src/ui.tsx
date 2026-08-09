@@ -22,9 +22,11 @@ export function Panel({
   className?: string;
 }) {
   return (
-    <section className={cn("border border-line bg-panel", className)}>
+    <section
+      className={cn("overflow-hidden rounded-xl border border-line bg-panel shadow-soft", className)}
+    >
       {(title || right) && (
-        <header className="flex items-center justify-between border-b border-line px-3 py-2">
+        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-3 py-2.5">
           {title && <h2 className="label">{title}</h2>}
           {right}
         </header>

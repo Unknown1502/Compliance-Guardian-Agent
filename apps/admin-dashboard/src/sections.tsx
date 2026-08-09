@@ -108,7 +108,7 @@ export function OverviewSection() {
         sub={`Platform state as of ${new Date(data.generated_at).toLocaleString()}`}
       />
 
-      <div className="grid grid-cols-2 border border-line bg-panel md:grid-cols-4">
+      <div className="grid grid-cols-2 overflow-hidden rounded-xl border border-line bg-panel shadow-soft md:grid-cols-4">
         <Metric label="Tenants" value={data.tenants_total} hint={`${data.members_total} members`} />
         <Metric label="Documents" value={data.documents_total} />
         <Metric label="Checks" value={data.checks_total} />
@@ -119,7 +119,7 @@ export function OverviewSection() {
         />
       </div>
 
-      <div className="mt-3 grid grid-cols-2 border border-line bg-panel md:grid-cols-4">
+      <div className="mt-3 grid grid-cols-2 overflow-hidden rounded-xl border border-line bg-panel shadow-soft md:grid-cols-4">
         <Metric label="Auto-approved" value={data.checks_auto_approved} tone="ok" />
         <Metric label="Escalated" value={highRisk} tone={highRisk ? "warn" : "neutral"} />
         <Metric label="Rejected" value={data.checks_rejected} tone="crit" />
@@ -296,7 +296,7 @@ export function TenantDetailSection() {
           </Link>
         }
       />
-      <div className="grid grid-cols-2 border border-line bg-panel md:grid-cols-4">
+      <div className="grid grid-cols-2 overflow-hidden rounded-xl border border-line bg-panel shadow-soft md:grid-cols-4">
         <Metric label="Users" value={tenant.members} />
         <Metric label="Documents" value={tenant.documents} />
         <Metric label="Checks" value={tenant.checks} />
@@ -451,7 +451,7 @@ export function ReviewsSection() {
   return (
     <div>
       <Head title="Human review" sub="Open escalations across every tenant" />
-      <div className="grid grid-cols-2 border border-line bg-panel md:grid-cols-4">
+      <div className="grid grid-cols-2 overflow-hidden rounded-xl border border-line bg-panel shadow-soft md:grid-cols-4">
         <Metric label="Open" value={rows.length} tone={rows.length ? "warn" : "neutral"} />
         <Metric label="Critical (80+)" value={critical} tone={critical ? "crit" : "neutral"} />
         <Metric label="Unassigned" value={unassigned} tone={unassigned ? "warn" : "neutral"} />
@@ -729,7 +729,7 @@ export function SecuritySection() {
   return (
     <div>
       <Head title="Security center" sub="Failures, credential changes, and privileged access" />
-      <div className="grid grid-cols-2 border border-line bg-panel md:grid-cols-4">
+      <div className="grid grid-cols-2 overflow-hidden rounded-xl border border-line bg-panel shadow-soft md:grid-cols-4">
         <Metric label="Failures" value={counts.failure ?? 0} tone={counts.failure ? "crit" : "neutral"} />
         <Metric label="Credential events" value={counts.credential ?? 0} />
         <Metric label="Privileged access" value={counts["privileged access"] ?? 0} />
@@ -922,7 +922,7 @@ export function RulesetsSection() {
         sub="What the engine will apply, read from the files it evaluates against"
       />
 
-      <div className="grid grid-cols-2 border border-line bg-panel md:grid-cols-4">
+      <div className="grid grid-cols-2 overflow-hidden rounded-xl border border-line bg-panel shadow-soft md:grid-cols-4">
         <Metric
           label="Rulesets"
           value={rows.length}
