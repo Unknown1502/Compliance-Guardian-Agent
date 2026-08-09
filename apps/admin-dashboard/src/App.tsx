@@ -16,6 +16,7 @@ import {
   ShieldAlert,
   ScrollText,
   Gauge,
+  BookMarked,
   Settings as SettingsIcon,
   Search,
   LogOut,
@@ -31,6 +32,7 @@ import {
   ReviewsSection,
   AgentsSection,
   ComplianceSection,
+  RulesetsSection,
   AuditSection,
   SecuritySection,
   SystemSection,
@@ -46,6 +48,7 @@ const NAV = [
   { to: "/reviews", label: "Human review", icon: UserCheck },
   { to: "/agents", label: "AI operations", icon: Cpu },
   { to: "/compliance", label: "Compliance", icon: Gauge },
+  { to: "/rulesets", label: "Rulesets", icon: BookMarked },
   { to: "/audit", label: "Audit log", icon: ScrollText },
   { to: "/security", label: "Security", icon: ShieldAlert },
   { to: "/system", label: "System", icon: Gauge },
@@ -298,6 +301,7 @@ function Shell() {
           <Route path="/reviews" element={<ReviewsSection />} />
           <Route path="/agents" element={<AgentsSection />} />
           <Route path="/compliance" element={<ComplianceSection />} />
+          <Route path="/rulesets" element={<RulesetsSection />} />
           <Route path="/audit" element={<AuditSection />} />
           <Route path="/security" element={<SecuritySection />} />
           <Route path="/system" element={<SystemSection />} />

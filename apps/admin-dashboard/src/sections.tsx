@@ -15,6 +15,7 @@ import {
   type SecurityEvent,
   type AuditEvent,
   type ComplianceIntel,
+  type PlatformRuleset,
 } from "./api";
 import { useAuth } from "./auth";
 import {
@@ -825,6 +826,286 @@ export function SystemSection() {
 }
 
 // ---------------------------------------------------------------- Settings
+
+// ------------------------------------------------------------- Rulesets
+
+/** Codes read as codes; a name is faster to scan than "us-ca". */
+const JURISDICTION: Record<string, string> = {
+  au: "Australia",
+  in: "India",
+  eu: "European Union",
+  uk: "United Kingdom",
+  "us-ca": "United States (CA)",
+  ca: "Canada",
+  sg: "Singapore",
+  br: "Brazil",
+  cn: "China",
+  ae: "United Arab Emirates",
+  za: "South Africa",
+  generic: "Any jurisdiction",
+};
+
+const INDUSTRY: Record<string, string> = {
+  healthcare_ndis: "NDIS / disability",
+  aged_care: "Aged care",
+  bookkeeping: "Bookkeeping & payroll",
+  data_privacy: "Data privacy",
+  contract_review: "Contract review",
+  corporate_compliance: "Corporate compliance",
+};
+
+const label2 = (m: Record<string, string>, k: string) => m[k?.toLowerCase()] ?? k;
+
+const SEVERITY_ORDER = ["critical", "high", "medium", "low"] as const;
+
+/**
+ * Regulations & rulesets — what the engine will actually apply, and to whom.
+ *
+ * Read from the same YAML the compliance agent evaluates against, through the
+ * same loader, so this cannot drift from what runs. That matters more here
+ * than anywhere else in this console: a control plane reporting a rule the
+ * engine does not apply is worse than one reporting nothing.
+ *
+ * Read-only, like every other section. Publishing or editing rulesets from a
+ * UI would put a cross-tenant write in front of the rules that judge every
+ * customer document — that belongs in version control with review, not
+ * behind a button.
+ */
+export function RulesetsSection() {
+  const { data, error, loading } = useData<PlatformRuleset[]>(api.rulesets);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [q, setQ] = useState("");
+
+  const rows = data ?? [];
+  const keyOf = (r: PlatformRuleset) => r.industry + "/" + r.jurisdiction;
+  const active = rows.find((r) => keyOf(r) === selected) ?? rows[0];
+
+  const totals = useMemo(() => {
+    const jurisdictions = new Set(rows.map((r) => r.jurisdiction));
+    const rules = rows.reduce((n, r) => n + r.rule_count, 0);
+    const orphaned = rows.filter((r) => r.tenants_assigned === 0).length;
+    const critical = rows.reduce((n, r) => n + (r.severity_counts.critical ?? 0), 0);
+    return { jurisdictions: jurisdictions.size, rules, orphaned, critical };
+  }, [rows]);
+
+  const visibleRules = useMemo(() => {
+    if (!active) return [];
+    const needle = q.trim().toLowerCase();
+    if (!needle) return active.rules;
+    return active.rules.filter((r) =>
+      [r.id, r.description, r.severity, r.check_type].some((v) =>
+        String(v).toLowerCase().includes(needle),
+      ),
+    );
+  }, [active, q]);
+
+  if (loading) return <Loading />;
+  if (error) return <ErrorNote error={error} />;
+  if (!rows.length)
+    return (
+      <div>
+        <Head title="Regulations & rulesets" />
+        <Panel>
+          <Empty>
+            No ruleset loaded. The engine reads these from the rulesets directory shipped inside
+            each container, so an empty list means the deployment is missing that directory — not
+            that no rules are configured.
+          </Empty>
+        </Panel>
+      </div>
+    );
+
+  return (
+    <div>
+      <Head
+        title="Regulations & rulesets"
+        sub="What the engine will apply, read from the files it evaluates against"
+      />
+
+      <div className="grid grid-cols-2 border border-line bg-panel md:grid-cols-4">
+        <Metric
+          label="Rulesets"
+          value={rows.length}
+          hint={totals.jurisdictions + " jurisdictions"}
+        />
+        <Metric label="Rules" value={totals.rules} />
+        <Metric
+          label="Critical rules"
+          value={totals.critical}
+          tone={totals.critical ? "warn" : "neutral"}
+        />
+        <Metric
+          label="Unassigned"
+          value={totals.orphaned}
+          tone={totals.orphaned ? "warn" : "ok"}
+          hint="No workspace uses these"
+        />
+      </div>
+
+      <div className="mt-3 grid gap-3 lg:grid-cols-[360px_minmax(0,1fr)]">
+        <Panel title={"Rulesets \u00b7 " + rows.length}>
+          <div className="max-h-[70vh] overflow-auto">
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th>Ruleset</th>
+                  <th>Ver</th>
+                  <th>Rules</th>
+                  <th>Used by</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => {
+                  const isActive = !!active && keyOf(r) === keyOf(active);
+                  return (
+                    <tr
+                      key={keyOf(r)}
+                      onClick={() => {
+                        setSelected(keyOf(r));
+                        setQ("");
+                      }}
+                      className={cn("cursor-pointer", isActive && "bg-raised")}
+                    >
+                      <td>
+                        <div className={cn("text-fg", isActive && "text-accent")}>
+                          {label2(INDUSTRY, r.industry)}
+                        </div>
+                        <div className="text-2xs text-faint">
+                          {label2(JURISDICTION, r.jurisdiction)}
+                        </div>
+                      </td>
+                      <td>
+                        <Mono dim>{r.rule_set_version}</Mono>
+                      </td>
+                      <td className="num">{r.rule_count}</td>
+                      <td className="num">
+                        {r.tenants_assigned === 0 ? (
+                          <span className="text-warn" title="No workspace is assigned to this ruleset">
+                            0
+                          </span>
+                        ) : (
+                          r.tenants_assigned
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+
+        {active && (
+          <div className="min-w-0">
+            <Panel
+              title={
+                label2(INDUSTRY, active.industry) +
+                " \u00b7 " +
+                label2(JURISDICTION, active.jurisdiction)
+              }
+              right={<Filter value={q} onChange={setQ} placeholder="Filter rules..." />}
+            >
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-line px-3 py-2.5 text-sm">
+                <span className="text-fg-dim">
+                  v<Mono>{active.rule_set_version}</Mono>
+                </span>
+                <span className="text-fg-dim">
+                  {active.tenants_assigned} workspace{active.tenants_assigned === 1 ? "" : "s"}
+                </span>
+                {SEVERITY_ORDER.filter((s) => active.severity_counts[s]).map((s) => (
+                  <span
+                    key={s}
+                    className={cn(
+                      s === "critical" && "text-crit",
+                      s === "high" && "text-warn",
+                      (s === "medium" || s === "low") && "text-muted",
+                    )}
+                  >
+                    {active.severity_counts[s]} {s}
+                  </span>
+                ))}
+              </div>
+
+              <div className="max-h-[52vh] overflow-auto">
+                {visibleRules.length === 0 ? (
+                  <Empty>No rule in this ruleset matches that filter.</Empty>
+                ) : (
+                  <table className="tbl">
+                    <thead>
+                      <tr>
+                        <th>Rule</th>
+                        <th>Severity</th>
+                        <th>Check</th>
+                        <th>Evaluates</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visibleRules.map((rule) => (
+                        <tr key={rule.id}>
+                          <td>
+                            <Mono>{rule.id}</Mono>
+                            <div className="mt-0.5 max-w-xl text-2xs leading-relaxed text-muted">
+                              {rule.description}
+                            </div>
+                          </td>
+                          <td className="whitespace-nowrap">
+                            <span
+                              className={cn(
+                                rule.severity === "critical" && "text-crit",
+                                rule.severity === "high" && "text-warn",
+                                (rule.severity === "medium" || rule.severity === "low") &&
+                                  "text-muted",
+                              )}
+                            >
+                              {rule.severity}
+                            </span>
+                          </td>
+                          <td className="whitespace-nowrap text-fg-dim">{rule.check_type}</td>
+                          {/* Field NAMES, never values — values are tenant documents. */}
+                          <td>
+                            <Mono dim>{rule.params.join(", ") || "\u2014"}</Mono>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </Panel>
+
+            <Panel className="mt-3" title="Fields the ingestion agent must extract">
+              <div className="flex flex-wrap gap-1.5 px-3 py-3">
+                {active.required_fields.length === 0 ? (
+                  <span className="text-sm text-muted">
+                    This ruleset declares no required fields — each rule reads what it needs
+                    directly.
+                  </span>
+                ) : (
+                  active.required_fields.map((f) => (
+                    <span key={f} className="border border-line px-1.5 py-0.5 text-2xs">
+                      <Mono dim>{f}</Mono>
+                    </span>
+                  ))
+                )}
+              </div>
+              <p className="border-t border-line px-3 py-2 text-2xs text-faint">
+                A rule whose field is absent from a document returns &ldquo;uncertain&rdquo;
+                rather than a guess. That is why a document checked against the wrong ruleset
+                produces uncertainty rather than a failure.
+              </p>
+            </Panel>
+          </div>
+        )}
+      </div>
+
+      <p className="mt-2 text-2xs text-faint">
+        Read-only. Rulesets are versioned YAML in the repository, deployed with the services.
+        Every count on this page is computed from the same files the engine loads, so it cannot
+        report a rule that will not actually be applied.
+      </p>
+    </div>
+  );
+}
 
 export function SettingsSection() {
   const { admin } = useAuth();

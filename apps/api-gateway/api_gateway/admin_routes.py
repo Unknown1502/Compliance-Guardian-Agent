@@ -199,6 +199,32 @@ class PlatformSecurityEvent(BaseModel):
     category: str
 
 
+class PlatformRule(BaseModel):
+    id: str
+    description: str
+    check_type: str
+    severity: str
+    # The parameter NAMES a rule evaluates on — never the values, which are
+    # tenant data. Enough to see what a rule inspects without reading anyone's
+    # documents from the control plane.
+    params: list[str]
+
+
+class PlatformRuleset(BaseModel):
+    industry: str
+    jurisdiction: str
+    rule_set_version: str
+    rule_count: int
+    required_fields: list[str]
+    severity_counts: dict[str, int]
+    check_type_counts: dict[str, int]
+    # How many workspaces this ruleset actually governs. A ruleset nobody is
+    # assigned to is maintenance cost with no customer behind it, and that is
+    # invisible without this number.
+    tenants_assigned: int
+    rules: list[PlatformRule]
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -817,6 +843,80 @@ def build_admin_router(gw) -> APIRouter:
             )
             for r in job.result()
         ]
+
+    @router.get("/platform/rulesets", response_model=list[PlatformRuleset])
+    def platform_rulesets(
+        auth: AuthContext = Depends(require_platform_admin),
+    ) -> list[PlatformRuleset]:
+        """Every ruleset the engine can load, down to the individual rule.
+
+        Read from the same YAML files the compliance agent evaluates against,
+        via the same loader — so this cannot drift from what actually runs. A
+        control plane that reports a rule the engine does not apply is worse
+        than one that reports nothing.
+
+        Rule params are surfaced as NAMES only. The names say what a rule
+        inspects (record_retention_date, consent_record); the values are
+        tenant documents and have no business being readable from a
+        cross-tenant console.
+
+        A malformed ruleset is omitted rather than failing the request —
+        available_rulesets() already skips files that will not parse, which
+        means this list is exactly the set the engine can use.
+        """
+        from collections import Counter
+
+        from schema_validators import available_rulesets, load_ruleset
+
+        g = gw()
+        _audit_platform_access(g, auth, "platform.rulesets_viewed", {})
+
+        # One pass over tenants, so assignment counts do not cost a query per
+        # ruleset. Case-insensitive: tenants created before the jurisdiction
+        # picker stored "AU" while the files are lowercase ("au.yaml").
+        assigned: Counter[tuple[str, str]] = Counter()
+        try:
+            for t in g.repo.list_all_tenants(limit=1000):
+                assigned[(t.industry.lower(), t.jurisdiction.lower())] += 1
+        except Exception:
+            logger.exception("could not count ruleset assignment")
+
+        out: list[PlatformRuleset] = []
+        for option in available_rulesets(RULESETS_ROOT):
+            try:
+                ruleset = load_ruleset(RULESETS_ROOT, option.industry, option.jurisdiction)
+            except Exception:
+                logger.warning(
+                    "ruleset %s/%s listed but failed to load",
+                    option.industry,
+                    option.jurisdiction,
+                )
+                continue
+            out.append(
+                PlatformRuleset(
+                    industry=option.industry,
+                    jurisdiction=option.jurisdiction,
+                    rule_set_version=ruleset.rule_set_version,
+                    rule_count=len(ruleset.rules),
+                    required_fields=list(ruleset.required_fields),
+                    severity_counts=dict(Counter(r.severity.value for r in ruleset.rules)),
+                    check_type_counts=dict(Counter(r.check_type.value for r in ruleset.rules)),
+                    tenants_assigned=assigned.get(
+                        (option.industry.lower(), option.jurisdiction.lower()), 0
+                    ),
+                    rules=[
+                        PlatformRule(
+                            id=r.id,
+                            description=r.description,
+                            check_type=r.check_type.value,
+                            severity=r.severity.value,
+                            params=sorted(r.params.keys()),
+                        )
+                        for r in ruleset.rules
+                    ],
+                )
+            )
+        return out
 
     @router.get("/platform/system", response_model=list[ServiceStatus])
     def platform_system(

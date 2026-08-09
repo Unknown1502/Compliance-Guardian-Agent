@@ -140,3 +140,57 @@ class TestSignupStillValidatesServerSide:
         )
         # Rejected by the field pattern before load_ruleset is even reached.
         assert r.status_code == 422
+
+
+class TestPlatformRulesetsEndpoint:
+    """The control-plane view of rulesets.
+
+    Two properties matter here. It must agree exactly with what the engine can
+    load — a control plane reporting a rule the engine never applies is worse
+    than one reporting nothing. And it must expose rule parameter NAMES only,
+    because the values are tenant documents and this is the one cross-tenant
+    surface in the product.
+    """
+
+    def _admin(self, monkeypatch):
+        monkeypatch.setenv("CG_PLATFORM_ADMIN_UIDS", "operator@example.com")
+        c = _client(monkeypatch)
+        claims = {"uid": "op", "tenant_id": "t", "role": "owner", "email": "operator@example.com"}
+        raw = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
+        return c, {"Authorization": f"Bearer dev:{raw}"}
+
+    def test_matches_what_the_engine_can_actually_load(self, monkeypatch):
+        c, hdr = self._admin(monkeypatch)
+        rows = c.get("/api/platform/rulesets", headers=hdr).json()
+        reported = {(r["industry"], r["jurisdiction"]) for r in rows}
+        loadable = {(o.industry, o.jurisdiction) for o in available_rulesets(RULESETS)}
+        assert reported == loadable
+
+    def test_rule_counts_agree_with_the_files(self, monkeypatch):
+        c, hdr = self._admin(monkeypatch)
+        for row in c.get("/api/platform/rulesets", headers=hdr).json():
+            ruleset = load_ruleset(RULESETS, row["industry"], row["jurisdiction"])
+            assert row["rule_count"] == len(ruleset.rules) == len(row["rules"])
+            assert row["rule_set_version"] == ruleset.rule_set_version
+            assert sum(row["severity_counts"].values()) == row["rule_count"]
+
+    def test_exposes_param_names_never_values(self, monkeypatch):
+        """Param values would be tenant data on a cross-tenant surface."""
+        c, hdr = self._admin(monkeypatch)
+        for row in c.get("/api/platform/rulesets", headers=hdr).json():
+            for rule in row["rules"]:
+                assert isinstance(rule["params"], list)
+                assert all(isinstance(p, str) for p in rule["params"])
+
+    def test_no_filesystem_paths_leak(self, monkeypatch):
+        c, hdr = self._admin(monkeypatch)
+        body = c.get("/api/platform/rulesets", headers=hdr).text
+        assert "/app" not in body and ".yaml" not in body
+
+    def test_customer_gets_404_not_403(self, monkeypatch):
+        """404 so the route's existence is not confirmed to a prober."""
+        c = _client(monkeypatch)
+        claims = {"uid": "u1", "tenant_id": "tenant-a", "role": "owner"}
+        raw = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
+        r = c.get("/api/platform/rulesets", headers={"Authorization": f"Bearer dev:{raw}"})
+        assert r.status_code == 404

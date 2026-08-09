@@ -38,6 +38,7 @@ PLATFORM_ROUTES = [
     "/api/platform/reviews",
     "/api/platform/agents",
     "/api/platform/compliance",
+    "/api/platform/rulesets",
     "/api/platform/security",
     "/api/platform/system",
 ]

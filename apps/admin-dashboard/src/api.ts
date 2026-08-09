@@ -129,6 +129,27 @@ export interface AuditEvent {
   created_at: string;
 }
 
+export interface PlatformRule {
+  id: string;
+  description: string;
+  check_type: string;
+  severity: string;
+  /** Parameter NAMES only. Values are tenant documents and never cross this boundary. */
+  params: string[];
+}
+
+export interface PlatformRuleset {
+  industry: string;
+  jurisdiction: string;
+  rule_set_version: string;
+  rule_count: number;
+  required_fields: string[];
+  severity_counts: Record<string, number>;
+  check_type_counts: Record<string, number>;
+  tenants_assigned: number;
+  rules: PlatformRule[];
+}
+
 export interface ComplianceIntel {
   risk_distribution: { low: number; medium: number; high: number };
   top_rules: { rule_id: string; hits: number }[];
@@ -160,6 +181,7 @@ export const api = {
   security: (t: TokenFn, limit = 200) =>
     get<SecurityEvent[]>(t, `/api/platform/security?limit=${limit}`),
   system: (t: TokenFn) => get<ServiceStatus[]>(t, "/api/platform/system"),
+  rulesets: (t: TokenFn) => get<PlatformRuleset[]>(t, "/api/platform/rulesets"),
   audit: (t: TokenFn, limit = 200) =>
     get<{ count: number; events: AuditEvent[] }>(t, `/api/platform/audit?limit=${limit}`),
 };
