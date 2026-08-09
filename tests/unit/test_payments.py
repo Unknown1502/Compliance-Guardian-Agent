@@ -1,4 +1,4 @@
-"""Unit tests: Razorpay / PayPal / offline payment routes.
+"""Unit tests: Razorpay and PayPal payment routes.
 
 Hermetic. Every provider HTTP call is monkeypatched at payments._get_json /
 payments._post_json, so no network, no real keys, no real money.
@@ -24,7 +24,6 @@ from schema_validators import PlanTier, Tenant
 KEY_ID = "rzp_test_fake"
 KEY_SECRET = "razorpay-secret-not-real"
 WEBHOOK_SECRET = "razorpay-webhook-secret-not-real"
-ADMIN_EMAIL = "operator@example.com"
 
 # Matches payments._DEFAULT_PRICES so the underpayment guard has a baseline.
 ONEOFF_INR = 420000
@@ -109,7 +108,6 @@ def gateway(tenant_a, tenant_b) -> FakeGateway:
 @pytest.fixture()
 def client(monkeypatch, gateway):
     monkeypatch.setenv("CG_AUTH_DEV_MODE", "1")
-    monkeypatch.setenv("CG_PLATFORM_ADMIN_UIDS", ADMIN_EMAIL)
     monkeypatch.setenv("RAZORPAY_KEY_ID", KEY_ID)
     monkeypatch.setenv("RAZORPAY_KEY_SECRET", KEY_SECRET)
     monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", WEBHOOK_SECRET)
@@ -629,65 +627,6 @@ class TestPayPal:
 
 
 # ---------------------------------------------------------------------------
-# Offline
-# ---------------------------------------------------------------------------
-
-
-OFFLINE_BODY = {
-    "tenant_id": "tenant-a",
-    "plan": "subscription",
-    "amount_minor": 9900,
-    "currency": "USD",
-    "reference": "NEFT-2026-0001",
-}
-
-
-class TestOfflinePayments:
-    def test_customer_cannot_reach_it_and_gets_404_not_403(self, client, gateway):
-        """404 so the route's existence is not confirmed to a prober."""
-        r = client.post("/api/platform/payments/offline", json=OFFLINE_BODY, headers=_hdr())
-        assert r.status_code == 404
-        assert gateway.repo.get_tenant("tenant-a").plan_tier is PlanTier.FREE
-
-    def test_owner_role_does_not_grant_it(self, client, gateway):
-        """Roles are handed out by tenant owners, so they must not open this."""
-        r = client.post(
-            "/api/platform/payments/offline",
-            json=OFFLINE_BODY,
-            headers=_hdr(role="owner", email="attacker@example.com"),
-        )
-        assert r.status_code == 404
-
-    def test_operator_can_record_a_real_transfer(self, client, gateway):
-        r = client.post(
-            "/api/platform/payments/offline",
-            json=OFFLINE_BODY,
-            headers=_hdr(uid="admin", email=ADMIN_EMAIL),
-        )
-        assert r.status_code == 200, r.text
-        assert gateway.repo.get_tenant("tenant-a").plan_tier is PlanTier.PRO
-
-    def test_the_operator_is_named_in_the_audit_trail(self, client, gateway):
-        client.post(
-            "/api/platform/payments/offline",
-            json=OFFLINE_BODY,
-            headers=_hdr(uid="admin", email=ADMIN_EMAIL),
-        )
-        event = gateway.auditor.events[-1]
-        assert ADMIN_EMAIL in event["actor"]
-        assert event["after_state"]["reference"] == "NEFT-2026-0001"
-        assert event["after_state"]["provider"] == "offline"
-
-    def test_zero_amount_is_rejected(self, client):
-        r = client.post(
-            "/api/platform/payments/offline",
-            json=OFFLINE_BODY | {"amount_minor": 0},
-            headers=_hdr(uid="admin", email=ADMIN_EMAIL),
-        )
-        assert r.status_code == 422
-
-
-# ---------------------------------------------------------------------------
 # Discovery
 # ---------------------------------------------------------------------------
 
@@ -702,6 +641,12 @@ class TestProviderDiscovery:
         paypal = [p for p in r.json()["oneoff"] if p["provider"] == "paypal"][0]
         assert paypal["available"] is False
         assert paypal["amount_minor"] is None
+
+    def test_only_razorpay_and_paypal_are_offered(self, client):
+        """Exactly the two providers — no Stripe, no operator-only path."""
+        for plan in ("oneoff", "subscription"):
+            names = {p["provider"] for p in client.get("/api/billing/providers", headers=_hdr()).json()[plan]}
+            assert names == {"razorpay", "paypal"}
 
     def test_configured_provider_quotes_the_server_price(self, client):
         r = client.get("/api/billing/providers", headers=_hdr())

@@ -1,10 +1,9 @@
 """Payment providers.
 
-Why more than one: Razorpay accepts Indian sole proprietors and settles in
-INR without a conversion fee, PayPal covers international customers, and an
-offline path records a real bank or UPI transfer that happened outside any
-gateway. A product that can only take money one way is a product that cannot
-take money.
+Why two: Razorpay accepts unregistered Indian sole proprietors and settles in
+INR with no conversion fee, but its domestic account rejects international
+cards — so PayPal covers every customer outside India. A product that can
+only take money one way is a product that cannot take money.
 
 Stripe was removed deliberately. Its live mode requires a registered
 business, which put revenue behind an approval that had not arrived, and its
@@ -86,8 +85,6 @@ _DEFAULT_PRICES: dict[tuple[str, str], tuple[int, str]] = {
     ("razorpay", "subscription"): (830000, "INR"),  # ₹8,300
     ("paypal", "oneoff"): (5000, "USD"),            # $50.00
     ("paypal", "subscription"): (9900, "USD"),      # $99.00
-    ("offline", "oneoff"): (5000, "USD"),
-    ("offline", "subscription"): (9900, "USD"),
 }
 
 
@@ -380,39 +377,9 @@ class PayPal:
         )
 
 
-# ---------------------------------------------------------------------------
-# Offline
-# ---------------------------------------------------------------------------
-
-
-def record_offline_payment(
-    *, tenant_id: str, plan: str, amount_minor: int, currency: str, reference: str
-) -> VerifiedPayment:
-    """A payment that happened outside any gateway — bank transfer, UPI, cash.
-
-    There is nothing to verify cryptographically, so this is deliberately NOT
-    reachable by a customer: only a platform operator can record one, and the
-    audit trail records who did it and what reference they cited. The control
-    is accountability, not cryptography, and the endpoint says so plainly.
-    """
-    if not tenant_id:
-        raise ValueError("tenant_id is required")
-    if amount_minor <= 0:
-        raise ValueError("amount must be positive")
-    return VerifiedPayment(
-        provider="offline",
-        reference=reference or "manual",
-        amount_minor=amount_minor,
-        currency=currency,
-        plan=plan,
-        tenant_id=tenant_id,
-    )
-
-
 def configured_providers() -> dict[str, bool]:
     """Which providers this deployment can actually use right now."""
     return {
         "razorpay": Razorpay().configured,
         "paypal": PayPal().configured,
-        "offline": True,  # always available; operator-only
     }

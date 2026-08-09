@@ -1,9 +1,9 @@
 """Every payment route in the product.
 
-Three ways to take money, none of them requiring a registered business:
-Razorpay (Indian sole proprietors, settles in INR), PayPal (international),
-and an operator-recorded offline path for a bank or UPI transfer that
-happened outside any gateway.
+Two ways to take money, neither requiring a registered business: Razorpay
+(unregistered Indian sole proprietors, settles in INR) and PayPal, which
+covers every customer outside India — Razorpay's domestic account rejects
+international cards.
 
 The trust model is identical on every route, and it is the whole point of
 this file:
@@ -16,7 +16,8 @@ this file:
     server-to-server call to the provider with our own credentials.
   * The tenant to upgrade comes from the order's server-set notes, and is
     then re-checked against the authenticated caller. A verified payment for
-    someone else's tenant is a 403, not a silent cross-tenant write.
+    someone else's tenant is a 403, not a silent cross-tenant write. There is
+    no path here that writes across tenants at all.
   * Every upgrade is written to the append-only audit trail with the
     provider's own reference, so a disputed charge can be traced.
 
@@ -30,7 +31,7 @@ from __future__ import annotations
 import logging
 from typing import Callable
 
-from auth_middleware import AuthContext, require_auth, require_platform_admin
+from auth_middleware import AuthContext, require_auth
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from schema_validators import PlanTier
@@ -81,14 +82,6 @@ class PayPalOrderResponse(BaseModel):
 
 class PayPalCaptureRequest(_Strict):
     order_id: str = Field(min_length=1, max_length=128)
-
-
-class OfflinePaymentRequest(_Strict):
-    tenant_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")
-    plan: str = Field(pattern=_PLAN_PATTERN)
-    amount_minor: int = Field(gt=0, le=100_000_000)
-    currency: str = Field(min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")
-    reference: str = Field(min_length=1, max_length=200)
 
 
 class PaymentResult(BaseModel):
@@ -458,48 +451,5 @@ def build_payment_router(
             ) from exc
 
         return _apply_payment(payment, actor="paypal-capture", caller_tenant=auth.tenant_id)
-
-    # -- Offline -----------------------------------------------------------
-
-    @router.post("/platform/payments/offline", response_model=PaymentResult)
-    def offline_payment(
-        req: OfflinePaymentRequest,
-        auth: AuthContext = Depends(require_platform_admin),
-    ) -> PaymentResult:
-        """Record a payment that happened outside any gateway.
-
-        Deliberately on /api/platform/*: there is nothing to verify
-        cryptographically, so the control is accountability rather than
-        cryptography. Only a platform operator can call it, and the audit
-        trail records which operator did it and what reference they cited.
-        A customer cannot reach this route at all.
-
-        This is the one write on the platform surface. Everything else there
-        is read-only, and it is here because a bank transfer that has cleared
-        is a real payment the product must be able to honour.
-        """
-        from payments import record_offline_payment
-
-        enforce_standard(auth.uid, "offline payments")
-        payment = record_offline_payment(
-            tenant_id=req.tenant_id,
-            plan=req.plan,
-            amount_minor=req.amount_minor,
-            currency=req.currency.upper(),
-            reference=req.reference,
-        )
-        # caller_tenant is None: an operator recording a customer's transfer is
-        # acting across tenants by design, and the actor below names them.
-        result = _apply_payment(
-            payment, actor=f"operator:{auth.email or auth.uid}", caller_tenant=None
-        )
-        logger.info(
-            "offline payment recorded by %s for tenant %s (%s %s)",
-            auth.uid,
-            req.tenant_id,
-            req.amount_minor,
-            req.currency,
-        )
-        return result
 
     return router
