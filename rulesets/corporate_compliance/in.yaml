@@ -1,0 +1,146 @@
+# ComplianceGuardian ruleset — Private Limited company statutory compliance (India)
+#
+# ROC/MCA filings under the Companies Act, 2013 plus the annual income-tax
+# return. Scope is a private limited company; several rules do not apply to
+# LLPs, OPCs or listed companies, and none of this covers GST or TDS.
+#
+# Sourced from public secondary guidance (MCA-focused compliance vendors and
+# professional summaries), NOT the primary statute or MCA circulars. Have a
+# practising CS or CA review before relying on it for a real filing decision —
+# due dates in India are frequently extended by circular, and an extension is
+# invisible to this file.
+#
+# One correction worth recording: DIR-3 KYC is due 30 SEPTEMBER, not 30 June.
+# A widely circulated compliance calendar states 30 June; it is wrong, and
+# acting on it leaves a director three months late with the DIN already
+# deactivated. Verified against multiple independent sources before encoding.
+#
+# Where a source sets no unambiguous single date (MSME-1's exact day is cited
+# as both 30 and 31 October), the rule states the statutory basis rather than
+# inventing a day. A fabricated deadline in a compliance product is a
+# liability, not a feature.
+rule_set_version: "1.0.0"
+industry: "corporate_compliance"
+jurisdiction: "IN"
+required_fields:
+  - financial_year_end_date
+  - agm_held_date
+  - aoc4_filed_date
+  - mgt7_filed_date
+  - dpt3_filed_date
+  - dir3_kyc_filed_date
+  - adt1_filed_date
+  - auditor_appointed_date
+  - incorporation_date
+  - inc20a_filed_date
+  - board_meetings_held_count
+  - statutory_audit_completed
+  - directors_report_prepared
+  - income_tax_return_filed_date
+  - msme1_filed_date
+rules:
+  # --- Annual general meeting: the anchor for AOC-4 and MGT-7 -------------
+  - id: "agm_within_six_months_of_fy_end"
+    description: "The Annual General Meeting must be held within six months of the end of the financial year (Companies Act, 2013 s.96). Default carries a penalty of up to Rs. 1,00,000 for the company and Rs. 5,000 per day of continuing default."
+    check_type: "date_comparison"
+    severity: "critical"
+    params:
+      field: "agm_held_date"
+      relative_to: "financial_year_end_date"
+      maximum_days: 180
+      applies_when_present: true
+
+  - id: "aoc4_within_30_days_of_agm"
+    description: "Form AOC-4 (financial statements) must be filed with the ROC within 30 days of the AGM. Late filing attracts Rs. 100 per day with no upper cap."
+    check_type: "date_comparison"
+    severity: "critical"
+    params:
+      field: "aoc4_filed_date"
+      relative_to: "agm_held_date"
+      maximum_days: 30
+      applies_when_present: true
+
+  - id: "mgt7_within_60_days_of_agm"
+    description: "Form MGT-7 (annual return) must be filed with the ROC within 60 days of the AGM. Late filing attracts Rs. 100 per day with no upper cap."
+    check_type: "date_comparison"
+    severity: "critical"
+    params:
+      field: "mgt7_filed_date"
+      relative_to: "agm_held_date"
+      maximum_days: 60
+      applies_when_present: true
+
+  # --- Auditor ------------------------------------------------------------
+  - id: "adt1_within_15_days_of_appointment"
+    description: "Form ADT-1 notifying the ROC of an auditor's appointment must be filed within 15 days of the appointment. Late filing attracts a fee escalating with the delay, commonly cited from Rs. 300 per month."
+    check_type: "date_comparison"
+    severity: "high"
+    params:
+      field: "adt1_filed_date"
+      relative_to: "auditor_appointed_date"
+      maximum_days: 15
+      applies_when_present: true
+
+  - id: "statutory_audit_completed"
+    description: "The statutory audit must be completed and the audited financial statements adopted before AOC-4 is filed. Filing unaudited accounts exposes the company and its officers to penalties under the Companies Act."
+    check_type: "field_presence"
+    severity: "critical"
+    params:
+      field: "statutory_audit_completed"
+
+  # --- Commencement of business ------------------------------------------
+  - id: "inc20a_within_180_days_of_incorporation"
+    description: "Form INC-20A (declaration of commencement of business) must be filed within 180 days of incorporation. Failure carries Rs. 50,000 for the company and Rs. 1,000 per day for each officer in default, and the company may not commence business or borrow."
+    check_type: "date_comparison"
+    severity: "critical"
+    params:
+      field: "inc20a_filed_date"
+      relative_to: "incorporation_date"
+      maximum_days: 180
+      applies_when_present: true
+
+  # --- Annual returns and declarations ------------------------------------
+  - id: "dpt3_filed_annually"
+    description: "Form DPT-3 (return of deposits and of money received that is not a deposit) must be filed annually by 30 June for the financial year ended 31 March. Non-filing attracts penalties on the company and its officers."
+    check_type: "field_presence"
+    severity: "high"
+    params:
+      field: "dpt3_filed_date"
+
+  - id: "dir3_kyc_filed_by_30_september"
+    description: "Every director holding an active DIN must file DIR-3 KYC (or KYC-WEB) by 30 SEPTEMBER each year. Missing it deactivates the DIN and costs Rs. 5,000 per DIN to reactivate. Note: 30 June appears in some circulated calendars and is incorrect."
+    check_type: "field_presence"
+    severity: "critical"
+    params:
+      field: "dir3_kyc_filed_date"
+
+  - id: "msme1_half_yearly_return"
+    description: "Form MSME-1 reporting payments to MSME suppliers outstanding beyond 45 days must be filed for each half-year (April-September and October-March). Sources cite the October deadline as both 30 and 31 October, so confirm the exact day for the filing year rather than relying on a fixed date here."
+    check_type: "field_presence"
+    severity: "medium"
+    params:
+      field: "msme1_filed_date"
+
+  # --- Board governance ---------------------------------------------------
+  - id: "four_board_meetings_per_year"
+    description: "At least four board meetings must be held in a calendar year, with no more than 120 days between consecutive meetings (Companies Act, 2013 s.173). Default carries a penalty of Rs. 25,000 on the company and Rs. 5,000 on each officer in default."
+    check_type: "value_range"
+    severity: "high"
+    params:
+      field: "board_meetings_held_count"
+      minimum: 4
+
+  - id: "directors_report_before_agm"
+    description: "The Board's Report, including the directors' responsibility statement, must be prepared and approved before the AGM and attached to the financial statements sent to members."
+    check_type: "field_presence"
+    severity: "high"
+    params:
+      field: "directors_report_prepared"
+
+  # --- Tax ----------------------------------------------------------------
+  - id: "income_tax_return_filed"
+    description: "A company subject to audit must file its income-tax return by 31 October following the financial year. Late filing attracts interest under s.234A on tax payable plus a late-filing fee under s.234F."
+    check_type: "field_presence"
+    severity: "critical"
+    params:
+      field: "income_tax_return_filed_date"

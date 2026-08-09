@@ -197,13 +197,19 @@ export function Layout() {
       {/* The review screen is a side-by-side document/findings layout, so it
           needs the full viewport rather than the reading-width column that
           suits the list and settings pages. */}
+      {/* overflow-x-clip, not overflow-x-hidden: `hidden` would make this a
+          scroll container and break every `position: sticky` header inside a
+          routed view. `clip` contains a stray wide child without that side
+          effect, so the page scrolls vertically only. It is a backstop — wide
+          content (tables, the architecture strip) still carries its own
+          overflow-x-auto so it stays reachable rather than being cut off. */}
       <main
         className={cn(
-          "min-w-0 flex-1",
+          "w-full min-w-0 flex-1 overflow-x-clip",
           isFullWidth ? "p-0" : "px-5 py-6 sm:px-8 sm:py-8 lg:px-10",
         )}
       >
-        <div className={cn(!isFullWidth && "mx-auto max-w-5xl")}>
+        <div className={cn("min-w-0", !isFullWidth && "mx-auto max-w-5xl")}>
           {/* Sits above the routed view, not inside it, so it shows on every
               page until the address is confirmed. */}
           <VerifyEmailBanner />

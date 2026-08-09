@@ -281,7 +281,12 @@ export function CheckDetail() {
     .filter(Boolean);
 
   return (
-    <div className="-mx-5 -mt-2 flex h-[calc(100vh-64px)] flex-col sm:-mx-8 lg:-mx-10">
+    // No negative margins here. They existed to cancel the main column's
+    // padding and go full-bleed, but Layout already routes /checks/* through
+    // its p-0 branch — so there was nothing to cancel and they dragged the
+    // panel 40px past the container edge on desktop, which is what produced
+    // the page-level horizontal scrollbar. Full-bleed is unchanged.
+    <div className="flex h-[calc(100vh-64px)] w-full min-w-0 flex-col">
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-line bg-surface px-5 py-3.5 sm:px-8 lg:px-10">
         <div className="flex min-w-0 items-center gap-3">
           <button
