@@ -79,11 +79,22 @@ class VerifiedPayment:
 PLANS = ("oneoff", "subscription")
 
 _DEFAULT_PRICES: dict[tuple[str, str], tuple[int, str]] = {
-    # Roughly the USD list price converted at a round rate; set the env vars
-    # rather than editing this when the rate moves.
-    ("razorpay", "oneoff"): (420000, "INR"),        # ₹4,200
+    # Set against the market rather than guessed. Comparable NDIS practice
+    # software runs $45-299/month (ShiftCare entry through Activlink
+    # Professional) and compliance-automation platforms start around
+    # $625/month (Drata, Vanta, Sprinto entry tiers), so the subscription is
+    # deliberately positioned in the lower half of the practice-software band
+    # while doing work closer to the compliance-automation category.
+    #
+    # The one-off has no market comparable at all — every competitor sells
+    # per-user-per-month or an annual contract, nobody sells a single audit.
+    # It is priced as a door rather than a product: low enough to be a
+    # decision one person makes alone, high enough not to signal the output
+    # is trivial, and a 4x gap to the subscription so unlimited is the
+    # obvious choice past roughly four documents a month.
+    ("razorpay", "oneoff"): (199900, "INR"),        # ₹1,999
     ("razorpay", "subscription"): (830000, "INR"),  # ₹8,300
-    ("paypal", "oneoff"): (5000, "USD"),            # $50.00
+    ("paypal", "oneoff"): (2500, "USD"),            # $25.00
     ("paypal", "subscription"): (9900, "USD"),      # $99.00
 }
 

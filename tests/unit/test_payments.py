@@ -26,7 +26,7 @@ KEY_SECRET = "razorpay-secret-not-real"
 WEBHOOK_SECRET = "razorpay-webhook-secret-not-real"
 
 # Matches payments._DEFAULT_PRICES so the underpayment guard has a baseline.
-ONEOFF_INR = 420000
+ONEOFF_INR = 199900
 SUB_INR = 830000
 
 
@@ -172,7 +172,7 @@ class TestPricing:
     def test_paypal_major_units_formatting(self):
         from payments import price_for
 
-        assert price_for("paypal", "oneoff").major == "50.00"
+        assert price_for("paypal", "oneoff").major == "25.00"
 
 
 # ---------------------------------------------------------------------------

@@ -52,7 +52,7 @@ const PROVIDER_LABEL: Record<string, string> = {
  * server-side price. Matches the Razorpay INR defaults rather than a USD
  * figure, so the number does not visibly change currency once it loads.
  */
-const LIST_PRICE: Record<Plan, string> = { oneoff: "₹4,200", subscription: "₹8,300" };
+const LIST_PRICE: Record<Plan, string> = { oneoff: "₹1,999", subscription: "₹8,300" };
 
 function formatPrice(option: ProviderOption | undefined, plan: Plan): string {
   if (!option?.amount_minor || !option.currency) return LIST_PRICE[plan];
