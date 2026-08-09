@@ -317,8 +317,15 @@ export function CheckDetail() {
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-        {/* Left: the actual document under review. */}
-        <div className="min-h-0 flex-1 overflow-y-auto border-b border-line bg-surface-2 lg:border-b-0 lg:border-r">
+        {/* Left: the actual document under review.
+            min-w-0 is load-bearing. A flex item defaults to min-width:auto, so
+            without it this pane refuses to shrink below the intrinsic width of
+            the document text — and a source file with long unbroken lines then
+            pushes the findings pane off the right edge of the screen, clipping
+            the verdict badges. The document is the one thing here with
+            unpredictable width, so it is the one that must be allowed to
+            scroll instead of expand. */}
+        <div className="min-w-0 min-h-0 flex-1 overflow-y-auto border-b border-line bg-surface-2 lg:border-b-0 lg:border-r">
           <div className="sticky top-0 z-10 border-b border-line bg-surface px-5 py-2.5 sm:px-8">
             <span className="eyebrow inline-flex items-center gap-1.5">
               <FileText size={12} />
