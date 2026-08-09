@@ -287,7 +287,14 @@ export function CheckDetail() {
     // panel 40px past the container edge on desktop, which is what produced
     // the page-level horizontal scrollbar. Full-bleed is unchanged.
     <div className="flex h-[calc(100vh-64px)] w-full min-w-0 flex-col">
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-line bg-surface px-5 py-3.5 sm:px-8 lg:px-10">
+      {/* Asymmetric on purpose. This bar spans both columns, so each side has
+          to line up with a different one: the left edge with the document
+          pane below it (px-5 sm:px-8), the right edge with the findings list
+          (px-5). It previously carried lg:px-10 to match the main column's
+          padding, but this route renders through Layout's p-0 branch — so on
+          a wide screen the heading sat 8px further in than the document and
+          the risk score 20px further in than the findings beneath it. */}
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-line bg-surface py-3.5 pl-5 pr-5 sm:pl-8">
         <div className="flex min-w-0 items-center gap-3">
           <button
             onClick={() => navigate(-1)}

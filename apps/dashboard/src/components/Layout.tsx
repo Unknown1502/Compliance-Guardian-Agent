@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
@@ -17,6 +17,8 @@ import {
   ShieldCheck,
   ChevronDown,
   TrendingUp,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { PageTransition } from "./ui/PageTransition";
@@ -52,7 +54,25 @@ const GROUPS = [
   },
 ];
 
-function Logo({ onNavigate }: { onNavigate?: () => void }) {
+/** Persisted so the choice survives a reload; localStorage is wrapped because
+ *  it throws in private-mode Safari and a nav preference is not worth a crash. */
+const COLLAPSE_KEY = "cg.sidebar.collapsed";
+
+function readCollapsed(): boolean {
+  try {
+    return localStorage.getItem(COLLAPSE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function Logo({
+  onNavigate,
+  collapsed = false,
+}: {
+  onNavigate?: () => void;
+  collapsed?: boolean;
+}) {
   // A link, not a div: clicking the wordmark is the conventional way back to
   // the dashboard root. For a signed-in user "/" resolves to the Overview,
   // not the marketing landing page (see the auth gate in App.tsx).
@@ -61,28 +81,47 @@ function Logo({ onNavigate }: { onNavigate?: () => void }) {
       to="/"
       onClick={onNavigate}
       aria-label="Go to overview"
-      className="flex select-none items-center gap-2.5 rounded-lg transition-opacity hover:opacity-80"
+      title={collapsed ? "ComplianceGuardian" : undefined}
+      className={cn(
+        "flex select-none items-center gap-2.5 rounded-lg transition-opacity hover:opacity-80",
+        collapsed && "justify-center",
+      )}
     >
       <div className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-brand-600 text-white">
         <ShieldCheck size={16} strokeWidth={2.5} />
       </div>
-      <span className="text-[15px] font-bold tracking-tight text-ink">
-        ComplianceGuardian
-      </span>
+      {!collapsed && (
+        <span className="whitespace-nowrap text-[15px] font-bold tracking-tight text-ink">
+          ComplianceGuardian
+        </span>
+      )}
     </Link>
   );
 }
 
-function NavItems({ onNavigate }: { onNavigate?: () => void }) {
+function NavItems({
+  onNavigate,
+  collapsed = false,
+}: {
+  onNavigate?: () => void;
+  collapsed?: boolean;
+}) {
   const location = useLocation();
   return (
     <>
       {GROUPS.map((group) => (
         <div key={group.label} className="mb-6">
-          <div className="mb-1.5 flex items-center gap-1 px-2">
-            <span className="eyebrow">{group.label}</span>
-            <ChevronDown size={12} className="text-slate-400" />
-          </div>
+          {/* Collapsed, the group heading is replaced by a hairline: the rail
+              is too narrow for the label, but losing the grouping entirely
+              would turn eleven icons into an undifferentiated column. */}
+          {collapsed ? (
+            <div className="mx-auto mb-1.5 h-px w-6 bg-slate-200 dark:bg-slate-800" />
+          ) : (
+            <div className="mb-1.5 flex items-center gap-1 px-2">
+              <span className="eyebrow">{group.label}</span>
+              <ChevronDown size={12} className="text-slate-400" />
+            </div>
+          )}
           <div className="space-y-0.5">
             {group.items.map((n) => {
               const isActive = n.end
@@ -94,8 +133,12 @@ function NavItems({ onNavigate }: { onNavigate?: () => void }) {
                   to={n.to}
                   end={n.end}
                   onClick={onNavigate}
+                  // The native tooltip is the label when it is not rendered.
+                  title={collapsed ? n.label : undefined}
+                  aria-label={collapsed ? n.label : undefined}
                   className={cn(
-                    "relative flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13.5px] font-medium transition-colors",
+                    "relative flex items-center rounded-lg py-2 text-[13.5px] font-medium transition-colors",
+                    collapsed ? "justify-center px-0" : "gap-2.5 px-2.5",
                     isActive
                       ? "bg-white text-brand-700 shadow-soft dark:bg-slate-800 dark:text-brand-300"
                       : "text-slate-600 hover:bg-white/70 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800/60 dark:hover:text-slate-100",
@@ -107,9 +150,12 @@ function NavItems({ onNavigate }: { onNavigate?: () => void }) {
                   <n.icon
                     size={16}
                     strokeWidth={2}
-                    className={isActive ? "text-brand-600 dark:text-brand-400" : "text-slate-400"}
+                    className={cn(
+                      "shrink-0",
+                      isActive ? "text-brand-600 dark:text-brand-400" : "text-slate-400",
+                    )}
                   />
-                  {n.label}
+                  {!collapsed && <span className="whitespace-nowrap">{n.label}</span>}
                 </NavLink>
               );
             })}
@@ -124,33 +170,81 @@ export function Layout() {
   const { session, signOut } = useAuth();
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  // Defaults to expanded, so an existing user sees exactly what they saw
+  // before until they choose otherwise.
+  const [collapsed, setCollapsed] = useState(readCollapsed);
   const isFullWidth = location.pathname.startsWith("/checks/");
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(COLLAPSE_KEY, collapsed ? "1" : "0");
+    } catch {
+      /* private mode — the preference just won't persist */
+    }
+  }, [collapsed]);
+
   if (!session) return null;
 
   return (
     <div className="min-h-screen bg-white dark:bg-slate-950 lg:flex">
-      <aside className="hidden w-[248px] shrink-0 flex-col justify-between border-r border-slate-200 bg-slate-100 px-3 py-4 dark:border-slate-800 dark:bg-slate-900 lg:flex">
+      {/* Desktop rail. Only the width animates; the main column is flex-1 so
+          it reclaims the space on its own without any width maths here.
+          overflow-hidden keeps labels from spilling mid-transition. */}
+      <aside
+        className={cn(
+          "hidden shrink-0 flex-col justify-between overflow-hidden border-r border-slate-200 bg-slate-100 py-4 transition-[width] duration-200 ease-out dark:border-slate-800 dark:bg-slate-900 lg:flex",
+          collapsed ? "w-[68px] px-2" : "w-[248px] px-3",
+        )}
+      >
         <div>
-          <div className="px-2 pb-5">
-            <Logo />
+          <div className={cn("pb-5", collapsed ? "px-0" : "px-2")}>
+            <Logo collapsed={collapsed} />
           </div>
-          <NavItems />
+          <NavItems collapsed={collapsed} />
         </div>
 
-        <div className="border-t border-slate-200 px-2 pt-3 dark:border-slate-800">
-          <p className="font-mono-num truncate text-[11px] text-slate-500 dark:text-slate-400">
-            {session.tenantId}
-          </p>
-          <p className="mt-0.5 text-[11px] font-semibold capitalize text-brand-700 dark:text-brand-400">
-            {session.role}
-          </p>
-          <div className="mt-2.5 flex items-center justify-between">
+        <div
+          className={cn(
+            "border-t border-slate-200 pt-3 dark:border-slate-800",
+            collapsed ? "px-0" : "px-2",
+          )}
+        >
+          {!collapsed && (
+            <>
+              <p className="font-mono-num truncate text-[11px] text-slate-500 dark:text-slate-400">
+                {session.tenantId}
+              </p>
+              <p className="mt-0.5 text-[11px] font-semibold capitalize text-brand-700 dark:text-brand-400">
+                {session.role}
+              </p>
+            </>
+          )}
+          <div
+            className={cn(
+              "flex items-center gap-1",
+              collapsed ? "flex-col" : "mt-2.5 justify-between",
+            )}
+          >
             <button
               onClick={() => signOut()}
-              className="inline-flex items-center gap-1.5 text-[12.5px] text-slate-500 transition-colors hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100"
+              title={collapsed ? "Sign out" : undefined}
+              aria-label={collapsed ? "Sign out" : undefined}
+              className={cn(
+                "inline-flex items-center text-[12.5px] text-slate-500 transition-colors hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100",
+                collapsed ? "h-8 w-8 justify-center rounded-lg" : "gap-1.5",
+              )}
             >
-              <LogOut size={13} />
-              Sign out
+              <LogOut size={13} className="shrink-0" />
+              {!collapsed && "Sign out"}
+            </button>
+            <button
+              onClick={() => setCollapsed((c) => !c)}
+              aria-expanded={!collapsed}
+              aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+              title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+              className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-slate-400 transition-colors hover:bg-white/70 hover:text-slate-700 dark:hover:bg-slate-800/60 dark:hover:text-slate-200"
+            >
+              {collapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
             </button>
           </div>
         </div>
@@ -197,19 +291,13 @@ export function Layout() {
       {/* The review screen is a side-by-side document/findings layout, so it
           needs the full viewport rather than the reading-width column that
           suits the list and settings pages. */}
-      {/* overflow-x-clip, not overflow-x-hidden: `hidden` would make this a
-          scroll container and break every `position: sticky` header inside a
-          routed view. `clip` contains a stray wide child without that side
-          effect, so the page scrolls vertically only. It is a backstop — wide
-          content (tables, the architecture strip) still carries its own
-          overflow-x-auto so it stays reachable rather than being cut off. */}
       <main
         className={cn(
-          "w-full min-w-0 flex-1 overflow-x-clip",
+          "min-w-0 flex-1",
           isFullWidth ? "p-0" : "px-5 py-6 sm:px-8 sm:py-8 lg:px-10",
         )}
       >
-        <div className={cn("min-w-0", !isFullWidth && "mx-auto max-w-5xl")}>
+        <div className={cn(!isFullWidth && "mx-auto max-w-5xl")}>
           {/* Sits above the routed view, not inside it, so it shows on every
               page until the address is confirmed. */}
           <VerifyEmailBanner />
