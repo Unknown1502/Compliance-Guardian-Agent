@@ -12,6 +12,22 @@ import { Layout } from "./components/Layout";
 // to the one view where first paint matters most.
 import { LandingPage } from "./views/LandingPage";
 
+// Policy pages. Public and lazy: a payment provider's reviewer and a
+// prospective customer both need to reach them without an account, but they
+// are rarely opened, so they stay out of the entry chunk.
+const TermsPage = lazy(() => import("./views/LegalPages").then((m) => ({ default: m.TermsPage })));
+const PrivacyPage = lazy(() => import("./views/LegalPages").then((m) => ({ default: m.PrivacyPage })));
+const RefundsPage = lazy(() => import("./views/LegalPages").then((m) => ({ default: m.RefundsPage })));
+const ContactPage = lazy(() => import("./views/LegalPages").then((m) => ({ default: m.ContactPage })));
+
+/** The four policy routes, mounted for signed-in and signed-out visitors alike. */
+const legalRoutes = [
+  <Route key="terms" path="/terms" element={<TermsPage />} />,
+  <Route key="privacy" path="/privacy" element={<PrivacyPage />} />,
+  <Route key="refunds" path="/refunds" element={<RefundsPage />} />,
+  <Route key="contact" path="/contact" element={<ContactPage />} />,
+];
+
 // Everything behind auth is split per route. A signed-in user visiting the
 // task queue no longer downloads the reports, trends, billing and settings
 // code they may never open.
@@ -70,12 +86,15 @@ function Gate() {
 
   if (!session) {
     return (
-      <Routes>
-        <Route path="/" element={<LandingPage />} />
-        <Route path="/login" element={<Login initialMode="signin" />} />
-        <Route path="/signup" element={<Login initialMode="signup" />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+      <Suspense fallback={<SplashScreen />}>
+        <Routes>
+          <Route path="/" element={<LandingPage />} />
+          <Route path="/login" element={<Login initialMode="signin" />} />
+          <Route path="/signup" element={<Login initialMode="signup" />} />
+          {legalRoutes}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Suspense>
     );
   }
 
@@ -96,6 +115,7 @@ function Gate() {
           <Route path="team" element={<TeamView />} />
           <Route path="settings" element={<SettingsView />} />
         </Route>
+        {legalRoutes}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Suspense>

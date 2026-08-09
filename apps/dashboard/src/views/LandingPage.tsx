@@ -361,12 +361,24 @@ export function LandingPage() {
         </div>
       </section>
 
-      {/* Footer */}
+      {/* Footer. The policy links are not decoration: payment providers
+          review a merchant's site for exactly these four before activating an
+          account, and a customer deciding whether to pay looks for the refund
+          terms first. */}
       <footer className="border-t border-line py-10">
-        <div className="mx-auto flex max-w-container flex-col items-center justify-between gap-4 px-6 sm:flex-row">
-          <Logo />
-          <p className="text-[12.5px] text-muted">
-            © {new Date().getFullYear()} ComplianceGuardian. Built for the XPRIZE Build with Gemini Hackathon.
+        <div className="mx-auto flex max-w-container flex-col items-center gap-5 px-6">
+          <div className="flex w-full flex-col items-center justify-between gap-4 sm:flex-row">
+            <Logo />
+            <nav className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-[12.5px] text-ink-2">
+              <Link to="/terms" className="hover:text-ink">Terms of Service</Link>
+              <Link to="/privacy" className="hover:text-ink">Privacy Policy</Link>
+              <Link to="/refunds" className="hover:text-ink">Refunds &amp; Cancellation</Link>
+              <Link to="/contact" className="hover:text-ink">Contact Us</Link>
+            </nav>
+          </div>
+          <p className="text-center text-[12.5px] text-muted">
+            © {new Date().getFullYear()} ComplianceGuardian, operated by Prajwal Annasaheb Sutar,
+            Georai, Maharashtra, India. Built for the XPRIZE Build with Gemini Hackathon.
           </p>
         </div>
       </footer>
