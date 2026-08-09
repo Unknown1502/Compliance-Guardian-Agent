@@ -68,6 +68,7 @@ from schema_validators import (
     TaskType,
     Tenant,
     TenantUser,
+    available_rulesets,
     load_ruleset,
 )
 
@@ -274,6 +275,13 @@ class SignupResponse(BaseModel):
     tenant_id: str
     uid: str
     email: str
+
+
+class RulesetOptionResponse(BaseModel):
+    industry: str
+    jurisdiction: str
+    rule_set_version: str
+    rule_count: int
 
 
 class UploadResponse(BaseModel):
@@ -504,6 +512,33 @@ def healthz() -> dict:
 # requires a bearer token because it acts on an existing tenant; this one
 # creates the tenant.
 # ---------------------------------------------------------------------------
+
+
+@app.get("/api/rulesets/available", response_model=list[RulesetOptionResponse])
+def list_available_rulesets(request: Request) -> list[RulesetOptionResponse]:
+    """Every industry/jurisdiction pair a workspace can actually be created for.
+
+    Public, because signup needs it before an account exists. It exposes only
+    what is already on disk in the repository and shipped in every container,
+    so there is nothing here a customer could not infer from the product.
+
+    This exists to close a real gap: the dashboard used to hardcode
+    healthcare_ndis/AU at signup, so every workspace ever created got
+    Australian NDIS rules regardless of where the business actually operates.
+    Fourteen of the fifteen rulesets were unreachable, and a non-Australian
+    customer received confident, cited verdicts against rules that did not
+    govern them.
+    """
+    _enforce(_standard_limiter, f"rulesets:{_client_ip(request)}", "ruleset catalogue")
+    return [
+        RulesetOptionResponse(
+            industry=o.industry,
+            jurisdiction=o.jurisdiction,
+            rule_set_version=o.rule_set_version,
+            rule_count=o.rule_count,
+        )
+        for o in available_rulesets(RULESETS_ROOT)
+    ]
 
 
 @app.post("/api/signup", response_model=SignupResponse, status_code=status.HTTP_201_CREATED)

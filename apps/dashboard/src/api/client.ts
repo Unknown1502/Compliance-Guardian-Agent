@@ -38,11 +38,32 @@ export class ApiError extends Error {
   }
 }
 
+export interface RulesetOptionRow {
+  industry: string;
+  jurisdiction: string;
+  rule_set_version: string;
+  rule_count: number;
+}
+
+/**
+ * Which industry/jurisdiction pairs a workspace can be created for.
+ *
+ * Public — signup needs it before an account exists. Read from the server
+ * rather than listed here, because a hardcoded list is exactly what caused
+ * every workspace to be created as Australian NDIS regardless of where the
+ * business operated.
+ */
+export async function getAvailableRulesets(): Promise<RulesetOptionRow[]> {
+  return jsonOrThrow(await fetch(`${API_BASE_URL}/api/rulesets/available`));
+}
+
 export async function signup(
   email: string,
   password: string,
   businessName: string,
   jobTitle: string,
+  industry: string,
+  jurisdiction: string,
 ): Promise<{ tenant_id: string; uid: string; email: string }> {
   const res = await fetch(`${API_BASE_URL}/api/signup`, {
     method: "POST",
@@ -52,8 +73,10 @@ export async function signup(
       password,
       business_name: businessName,
       job_title: jobTitle,
-      industry: "healthcare_ndis",
-      jurisdiction: "AU",
+      // Chosen by the customer, then re-validated server-side against the
+      // rulesets that actually exist — the client cannot invent a pair.
+      industry,
+      jurisdiction,
     }),
   });
   return jsonOrThrow(res);

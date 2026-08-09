@@ -113,6 +113,41 @@ class FakeAuditor:
         return kwargs
 
 
+@pytest.fixture(autouse=True)
+def _reset_rate_limiters():
+    """Give every test a full rate-limit budget.
+
+    The gateway's token buckets and auth-backoff records are module-level
+    singletons built once at import, so without this they accumulate across
+    the whole pytest session: a test that ran fine alone starts returning 429
+    purely because earlier tests spent the tokens. That produced two failures
+    that looked like authorization bugs (403 and 400 expectations receiving
+    429) and were nothing of the sort.
+
+    Cleared before each test rather than after, so a test that fails midway
+    cannot leave the next one poisoned. Skipped quietly if the gateway is not
+    importable, since the agent-only suites do not need it.
+    """
+    try:
+        import api_gateway.main as main
+    except Exception:  # pragma: no cover - agent-only test runs
+        yield
+        return
+
+    for name in ("_upload_limiter", "_auth_limiter", "_expensive_limiter", "_standard_limiter"):
+        limiter = getattr(main, name, None)
+        if limiter is not None:
+            limiter._buckets.clear()
+    backoff = getattr(main, "_auth_backoff", None)
+    if backoff is not None:
+        # Attribute name differs by implementation; clear whichever dict holds
+        # the per-account failure records rather than guessing one.
+        for attr in vars(backoff).values():
+            if isinstance(attr, dict):
+                attr.clear()
+    yield
+
+
 @pytest.fixture()
 def ndis_tenant() -> Tenant:
     return Tenant(

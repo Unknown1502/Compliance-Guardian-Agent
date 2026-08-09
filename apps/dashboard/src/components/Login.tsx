@@ -1,11 +1,49 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ShieldCheck, CheckCircle2, XCircle, ArrowRight } from "lucide-react";
 import { AUTH_MODE } from "../config";
 import { useAuth } from "../auth/AuthContext";
 import type { Role } from "../types";
 import { Button } from "./ui/Button";
 import { cn } from "../lib/cn";
-import { ApiError, signup as signupRequest } from "../api/client";
+import {
+  ApiError,
+  getAvailableRulesets,
+  signup as signupRequest,
+  type RulesetOptionRow,
+} from "../api/client";
+
+/**
+ * Display names for the ruleset codes on disk.
+ *
+ * A lookup, not a source of truth: anything missing here falls back to the
+ * raw code, so adding a ruleset YAML makes it selectable immediately without
+ * a frontend change. The server decides what exists; this only decides how
+ * it reads.
+ */
+const INDUSTRY_LABEL: Record<string, string> = {
+  healthcare_ndis: "NDIS / disability services",
+  aged_care: "Aged care",
+  bookkeeping: "Bookkeeping & payroll",
+  data_privacy: "Data privacy & protection",
+  contract_review: "Contract review",
+};
+
+const JURISDICTION_LABEL: Record<string, string> = {
+  au: "Australia",
+  in: "India",
+  eu: "European Union",
+  uk: "United Kingdom",
+  "us-ca": "United States (California)",
+  ca: "Canada",
+  sg: "Singapore",
+  br: "Brazil",
+  cn: "China",
+  ae: "United Arab Emirates",
+  za: "South Africa",
+  generic: "Any jurisdiction",
+};
+
+const label = (map: Record<string, string>, key: string) => map[key] ?? key;
 
 const DEMO_TENANTS = [
   { id: "tenant-sunrise-care", label: "Sunrise Community Care (NDIS)" },
@@ -41,6 +79,36 @@ export function Login({ initialMode = "signin" }: { initialMode?: "signin" | "si
   const [jobTitle, setJobTitle] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [rulesets, setRulesets] = useState<RulesetOptionRow[]>([]);
+  const [industry, setIndustry] = useState("");
+  const [jurisdiction, setJurisdiction] = useState("");
+
+  // Loaded on mount so the menu reflects what the server can actually check
+  // documents against. If this call fails the selects stay empty and signup
+  // is blocked rather than silently defaulting — creating a workspace under
+  // the wrong jurisdiction produces confident, cited, wrong verdicts, which
+  // is worse than not creating it at all.
+  useEffect(() => {
+    let live = true;
+    getAvailableRulesets()
+      .then((rows) => {
+        if (!live) return;
+        setRulesets(rows);
+        const first = rows[0];
+        if (first) {
+          setIndustry(first.industry);
+          setJurisdiction(first.jurisdiction);
+        }
+      })
+      .catch(() => live && setRulesets([]));
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const industries = Array.from(new Set(rulesets.map((r) => r.industry)));
+  const jurisdictions = rulesets.filter((r) => r.industry === industry);
+  const selected = jurisdictions.find((r) => r.jurisdiction === jurisdiction);
 
   const handleDev = () => {
     setBusy(true);
@@ -54,7 +122,7 @@ export function Login({ initialMode = "signin" }: { initialMode?: "signin" | "si
     setBusy(true);
     try {
       if (mode === "signup") {
-        await signupRequest(email, password, businessName, jobTitle);
+        await signupRequest(email, password, businessName, jobTitle, industry, jurisdiction);
       }
       await firebaseSignIn(email, password);
     } catch (err) {
@@ -145,7 +213,7 @@ export function Login({ initialMode = "signin" }: { initialMode?: "signin" | "si
                 <p className="mt-1.5 text-[13.5px] text-slate-500 dark:text-slate-400">
                   {mode === "signin"
                     ? "Sign in to your compliance workspace."
-                    : "Set up your NDIS workspace in under a minute."}
+                    : "Set up your compliance workspace in under a minute."}
                 </p>
               </div>
 
@@ -174,6 +242,51 @@ export function Login({ initialMode = "signin" }: { initialMode?: "signin" | "si
                       Shown to your team so reviewers know who decided what.
                     </span>
                   </label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <label className="block">
+                      <span className={LABEL}>What you do</span>
+                      <select
+                        className={FIELD}
+                        value={industry}
+                        onChange={(e) => {
+                          const next = e.target.value;
+                          setIndustry(next);
+                          // Not every industry covers every jurisdiction, so
+                          // move to a pair that exists rather than leaving a
+                          // combination the server would reject.
+                          const first = rulesets.find((r) => r.industry === next);
+                          if (first) setJurisdiction(first.jurisdiction);
+                        }}
+                      >
+                        {industries.map((i) => (
+                          <option key={i} value={i}>
+                            {label(INDUSTRY_LABEL, i)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className={LABEL}>Where you operate</span>
+                      <select
+                        className={FIELD}
+                        value={jurisdiction}
+                        onChange={(e) => setJurisdiction(e.target.value)}
+                      >
+                        {jurisdictions.map((r) => (
+                          <option key={r.jurisdiction} value={r.jurisdiction}>
+                            {label(JURISDICTION_LABEL, r.jurisdiction)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  <span className="-mt-1 block text-[11.5px] text-muted">
+                    {rulesets.length === 0
+                      ? "Could not load the available rulesets — reload before signing up."
+                      : selected
+                        ? `Your documents will be checked against ${selected.rule_count} rules (v${selected.rule_set_version}). This decides which law applies, so pick where the business actually operates.`
+                        : "Pick the combination that matches your business."}
+                  </span>
                 </>
               )}
               <label className="block">
@@ -203,6 +316,10 @@ export function Login({ initialMode = "signin" }: { initialMode?: "signin" | "si
                 size="lg"
                 className="!mt-5 w-full"
                 icon={!busy ? <ArrowRight size={15} /> : undefined}
+                // Signing up without a resolved industry/jurisdiction would
+                // create a workspace with no ruleset behind it, so the button
+                // waits for the catalogue rather than guessing a default.
+                disabled={mode === "signup" && (!industry || !jurisdiction)}
               >
                 {mode === "signin" ? "Sign in" : "Create account"}
               </Button>
