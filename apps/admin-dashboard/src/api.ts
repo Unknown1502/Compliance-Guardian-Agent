@@ -35,6 +35,34 @@ async function get<T>(getToken: TokenFn, path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/**
+ * The console's only write, and deliberately the narrowest one that solves a
+ * real problem: it controls a workspace's ACCESS and never touches its
+ * records. No document, verdict or audit entry is reachable from here.
+ *
+ * A console able to rewrite compliance history would be a liability in a
+ * product whose whole claim is that history cannot be rewritten. One unable
+ * to stop an abusive or non-paying tenant is merely incomplete.
+ */
+async function put<T>(getToken: TokenFn, path: string, body: unknown): Promise<T> {
+  const token = await getToken();
+  const res = await fetch(`${BASE}${path}`, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      detail = (await res.json()).detail ?? detail;
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new ApiError(res.status, detail);
+  }
+  return res.json() as Promise<T>;
+}
+
 // -- shapes ----------------------------------------------------------------
 
 export interface WhoAmI {
@@ -43,7 +71,17 @@ export interface WhoAmI {
   platform_admin: boolean;
 }
 
+export interface TenantStatusResult {
+  tenant_id: string;
+  name: string;
+  status: string;
+  status_reason: string;
+  changed: boolean;
+}
+
 export interface TenantRow {
+  status: string;
+  status_reason: string;
   tenant_id: string;
   name: string;
   industry: string;
@@ -182,6 +220,8 @@ export const api = {
     get<SecurityEvent[]>(t, `/api/platform/security?limit=${limit}`),
   system: (t: TokenFn) => get<ServiceStatus[]>(t, "/api/platform/system"),
   rulesets: (t: TokenFn) => get<PlatformRuleset[]>(t, "/api/platform/rulesets"),
+  setTenantStatus: (t: TokenFn, tenantId: string, status: "active" | "suspended", reason: string) =>
+    put<TenantStatusResult>(t, `/api/platform/tenants/${tenantId}/status`, { status, reason }),
   audit: (t: TokenFn, limit = 200) =>
     get<{ count: number; events: AuditEvent[] }>(t, `/api/platform/audit?limit=${limit}`),
 };

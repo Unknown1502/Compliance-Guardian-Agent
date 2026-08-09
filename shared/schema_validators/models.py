@@ -38,6 +38,19 @@ class PlanTier(str, Enum):
     PRO = "pro"
 
 
+class TenantStatus(str, Enum):
+    """Whether a workspace may use the platform.
+
+    Access control only. Suspending a workspace stops its people signing in
+    and its API keys working; it never alters a document, a verdict, or an
+    audit record. That distinction is the whole design: the operator console
+    can control access and can never rewrite history.
+    """
+
+    ACTIVE = "active"
+    SUSPENDED = "suspended"
+
+
 class Tenant(StrictModel):
     tenant_id: str = Field(min_length=1)
     name: str = Field(min_length=1)
@@ -56,6 +69,13 @@ class Tenant(StrictModel):
     # destructive, so it never happens unless a tenant explicitly opts in.
     # The append-only audit trail is NEVER affected by this setting.
     retention_days: int = Field(default=0, ge=0, le=3650)
+
+    # Defaults to ACTIVE so every workspace written before this field existed
+    # reads back as active rather than needing a migration.
+    status: TenantStatus = TenantStatus.ACTIVE
+    # Why a workspace was suspended, shown to its users at sign-in. Kept short
+    # and operator-written: "payment failed" is actionable, "policy" is not.
+    status_reason: str = Field(default="", max_length=300)
 
 
 class ApiKeyRecord(StrictModel):

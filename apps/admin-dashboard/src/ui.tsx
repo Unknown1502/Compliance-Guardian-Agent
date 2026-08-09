@@ -4,7 +4,7 @@
 // predictable, so there is one way to draw a metric, one way to draw a table,
 // and one severity scale used everywhere.
 
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 export function cn(...parts: (string | false | null | undefined)[]) {
   return parts.filter(Boolean).join(" ");
@@ -174,4 +174,117 @@ export function ago(iso: string): string {
   const hrs = Math.floor(mins / 60);
   if (hrs < 24) return `${hrs}h ago`;
   return `${Math.floor(hrs / 24)}d ago`;
+}
+
+
+/**
+ * Confirmation for a privileged action.
+ *
+ * Deliberately not a window.confirm: a privileged action needs to state its
+ * consequence, name what it does NOT do, and collect a reason before the
+ * confirm button becomes usable. The reason is not optional anywhere it is
+ * used — an operator who cannot say why in a sentence has not decided yet.
+ */
+export function ConfirmAction({
+  open,
+  title,
+  intent = "warn",
+  consequence,
+  preserved,
+  reasonLabel = "Reason",
+  reasonPlaceholder,
+  confirmLabel,
+  busy,
+  error,
+  onConfirm,
+  onCancel,
+}: {
+  open: boolean;
+  title: string;
+  intent?: "warn" | "crit" | "ok";
+  consequence: ReactNode;
+  preserved?: ReactNode;
+  reasonLabel?: string;
+  reasonPlaceholder?: string;
+  confirmLabel: string;
+  busy?: boolean;
+  error?: string | null;
+  onConfirm: (reason: string) => void;
+  onCancel: () => void;
+}) {
+  const [reason, setReason] = useState("");
+  useEffect(() => {
+    if (open) setReason("");
+  }, [open]);
+  if (!open) return null;
+
+  const tone = { warn: "text-warn", crit: "text-crit", ok: "text-ok" }[intent];
+  // Matches the server's own minimum, so the button and the API agree about
+  // what counts as a reason rather than the user discovering it on submit.
+  const ready = reason.trim().length >= 12;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center bg-fg/25 px-4 pt-[12vh]"
+      onClick={onCancel}
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+    >
+      <div
+        className="w-full max-w-lg overflow-hidden rounded-xl border border-line bg-panel shadow-soft-md"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <header className="border-b border-line px-4 py-3">
+          <h2 className={cn("text-lg font-semibold", tone)}>{title}</h2>
+        </header>
+
+        <div className="space-y-3 px-4 py-4 text-sm">
+          <div className="text-fg-dim">{consequence}</div>
+          {preserved && (
+            <div className="rounded-lg border border-line bg-raised px-3 py-2.5 text-sm text-muted">
+              {preserved}
+            </div>
+          )}
+
+          <label className="block">
+            <span className="label">{reasonLabel}</span>
+            <textarea
+              autoFocus
+              rows={2}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder={reasonPlaceholder}
+              className="mt-1 w-full rounded-lg border border-line bg-panel px-2.5 py-2 text-sm text-fg placeholder:text-faint focus:border-accent focus:outline-none"
+            />
+            <span className="mt-1 block text-2xs text-faint">
+              Recorded against your name in the append-only audit trail, and shown to the
+              workspace. Minimum 12 characters.
+            </span>
+          </label>
+
+          {error && <p className="text-sm text-crit">{error}</p>}
+        </div>
+
+        <footer className="flex items-center justify-end gap-2 border-t border-line px-4 py-3">
+          <button
+            onClick={onCancel}
+            className="rounded-lg border border-line px-3 py-1.5 text-sm text-fg-dim transition-colors hover:bg-raised"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => onConfirm(reason.trim())}
+            disabled={!ready || busy}
+            className={cn(
+              "rounded-lg px-3 py-1.5 text-sm font-medium text-white shadow-soft transition-colors disabled:opacity-40",
+              intent === "crit" ? "bg-crit hover:opacity-90" : "bg-accent hover:bg-accent-dim",
+            )}
+          >
+            {busy ? "Working..." : confirmLabel}
+          </button>
+        </footer>
+      </div>
+    </div>
+  );
 }

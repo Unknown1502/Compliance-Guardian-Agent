@@ -40,6 +40,7 @@ from schema_validators.models import (
     TaskType,
     ApiKeyRecord,
     Tenant,
+    TenantStatus,
     TenantUser,
 )
 from schema_validators.rulesets import (
@@ -71,6 +72,7 @@ __all__ = [
     "TaskType",
     "ApiKeyRecord",
     "Tenant",
+    "TenantStatus",
     "TenantUser",
     "RulesetNotFoundError",
     "RulesetOption",

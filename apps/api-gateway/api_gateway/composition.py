@@ -11,8 +11,10 @@ from __future__ import annotations
 import logging
 import os
 
+import time
+
 from audit_logger import AuditLogger
-from auth_middleware import AuthContext, set_api_key_resolver
+from auth_middleware import AuthContext, set_api_key_resolver, set_tenant_status_resolver
 from escalation_service.notifications import AuditNotifier
 from notifications import SlackNotifier
 from gcp_clients import (
@@ -53,6 +55,7 @@ class Gateway:
         self._gemini = None
         self._task_service = None
         self._register_api_key_auth()
+        self._register_tenant_status()
 
     def _register_api_key_auth(self) -> None:
         """Teach auth_middleware how to resolve an X-API-Key header.
@@ -82,6 +85,39 @@ class Gateway:
             )
 
         set_api_key_resolver(resolve)
+
+    def _register_tenant_status(self) -> None:
+        """Teach auth_middleware to refuse suspended workspaces.
+
+        Cached for a short window because this runs on EVERY authenticated
+        request and would otherwise add a Firestore read to each one. The
+        trade is explicit: a suspension takes up to TTL seconds to bite. For
+        stopping abuse or chasing a failed payment that is fine; if it ever
+        needs to be instant, the answer is a push invalidation, not a longer
+        hot path.
+
+        Fails open on a datastore error — see _enforce_tenant_status. A blip
+        in Firestore must not lock every customer out of the product.
+        """
+        repo = self.repo
+        ttl = float(os.environ.get("CG_TENANT_STATUS_TTL_SECONDS", "30"))
+        cache: dict[str, tuple[float, str]] = {}
+
+        def resolve(tenant_id: str) -> str:
+            now = time.monotonic()
+            hit = cache.get(tenant_id)
+            if hit and now - hit[0] < ttl:
+                return hit[1]
+            tenant = repo.get_tenant(tenant_id)
+            reason = ""
+            if getattr(tenant, "status", None) == "suspended" or (
+                getattr(getattr(tenant, "status", None), "value", None) == "suspended"
+            ):
+                reason = tenant.status_reason or "Contact support to restore access."
+            cache[tenant_id] = (now, reason)
+            return reason
+
+        set_tenant_status_resolver(resolve)
 
     # Lazy Gemini so read/decision paths work without a key.
     def gemini(self):

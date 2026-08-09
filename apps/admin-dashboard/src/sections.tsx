@@ -16,6 +16,7 @@ import {
   type AuditEvent,
   type ComplianceIntel,
   type PlatformRuleset,
+  ApiError,
 } from "./api";
 import { useAuth } from "./auth";
 import {
@@ -31,6 +32,7 @@ import {
   Mono,
   ago,
   cn,
+  ConfirmAction,
 } from "./ui";
 
 /** Loads once, exposes refresh, and surfaces errors instead of hiding them. */
@@ -172,9 +174,37 @@ export function OverviewSection() {
 // ----------------------------------------------------------------- Tenants
 
 export function TenantsSection() {
-  const { data, error, loading } = useData<Overview>(api.overview);
+  const { getToken } = useAuth();
+  const { data, error, loading, reload } = useData<Overview>(api.overview);
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<keyof Overview["tenants"][number]>("created_at");
+
+  // The console's only write. Access control, never record alteration.
+  const [target, setTarget] = useState<Overview["tenants"][number] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const suspending = target?.status !== "suspended";
+
+  const applyStatus = async (reason: string) => {
+    if (!target) return;
+    setBusy(true);
+    setActionError(null);
+    try {
+      await api.setTenantStatus(
+        getToken,
+        target.tenant_id,
+        suspending ? "suspended" : "active",
+        reason,
+      );
+      setTarget(null);
+      reload();
+    } catch (e) {
+      setActionError(e instanceof ApiError ? e.message : (e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const rows = useMemo(() => {
     if (!data) return [];
@@ -230,6 +260,7 @@ export function TenantsSection() {
                     {label}
                   </th>
                 ))}
+                <th>Access</th>
               </tr>
             </thead>
             <tbody>
@@ -253,11 +284,30 @@ export function TenantsSection() {
                     {t.open_escalations}
                   </td>
                   <td className="text-faint">{ago(t.created_at)}</td>
+                  <td className="whitespace-nowrap">
+                    {t.status === "suspended" ? (
+                      <span className="text-crit" title={t.status_reason}>
+                        Suspended
+                      </span>
+                    ) : (
+                      <span className="text-muted">Active</span>
+                    )}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setActionError(null);
+                        setTarget(t);
+                      }}
+                      className="ml-2 text-accent hover:underline"
+                    >
+                      {t.status === "suspended" ? "Restore" : "Suspend"}
+                    </button>
+                  </td>
                 </tr>
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={9}>
+                  <td colSpan={10}>
                     <Empty>No tenants match.</Empty>
                   </td>
                 </tr>
@@ -266,6 +316,51 @@ export function TenantsSection() {
           </table>
         </div>
       </Panel>
+
+      <ConfirmAction
+        open={target !== null}
+        intent={suspending ? "crit" : "ok"}
+        title={
+          suspending
+            ? `Suspend ${target?.name ?? ""}`
+            : `Restore access for ${target?.name ?? ""}`
+        }
+        confirmLabel={suspending ? "Suspend workspace" : "Restore access"}
+        busy={busy}
+        error={actionError}
+        onCancel={() => setTarget(null)}
+        onConfirm={applyStatus}
+        reasonLabel={suspending ? "Why is this workspace being suspended?" : "Why is access being restored?"}
+        reasonPlaceholder={
+          suspending
+            ? "Payment failed on three consecutive attempts."
+            : "Payment received and cleared."
+        }
+        consequence={
+          suspending ? (
+            <>
+              Everyone in this workspace will be signed out of the product and its API keys
+              will stop working. {target?.members ?? 0} member
+              {target?.members === 1 ? "" : "s"} affected.
+            </>
+          ) : (
+            <>
+              Members can sign in again immediately and API keys resume working. Everything is
+              exactly as they left it.
+            </>
+          )
+        }
+        preserved={
+          suspending ? (
+            <>
+              <strong className="text-fg">Nothing is deleted.</strong> All{" "}
+              {target?.documents ?? 0} documents, {target?.checks ?? 0} checks and the entire
+              audit trail are preserved untouched and return intact on restore. This controls
+              access only — it cannot alter a record.
+            </>
+          ) : undefined
+        }
+      />
     </div>
   );
 }

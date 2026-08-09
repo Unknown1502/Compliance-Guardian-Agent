@@ -157,6 +157,48 @@ def set_api_key_resolver(resolver) -> None:
     _api_key_resolver = resolver
 
 
+_tenant_status_resolver = None
+
+
+def set_tenant_status_resolver(resolver) -> None:
+    """Register how a tenant_id is checked for suspension.
+
+    Injected for the same reason as the API-key resolver: auth_middleware
+    keeps no datastore dependency, and a deployment that never configures one
+    simply never suspends anybody rather than failing open in some subtler
+    way.
+
+    The resolver returns None when the workspace may proceed, or a short
+    human reason when it may not.
+    """
+    global _tenant_status_resolver
+    _tenant_status_resolver = resolver
+
+
+def _enforce_tenant_status(ctx: AuthContext) -> AuthContext:
+    """Refuse a suspended workspace, whatever it authenticated with.
+
+    Applied after both bearer-token and API-key authentication, so revoking
+    access does not depend on which credential was used. 403 rather than 401:
+    the credential is genuine, the workspace is not permitted — and a 401
+    would send a correctly-signed-in user round the login loop forever.
+    """
+    if _tenant_status_resolver is None:
+        return ctx
+    try:
+        reason = _tenant_status_resolver(ctx.tenant_id)
+    except Exception:
+        # A datastore blip must not lock every customer out of the product.
+        logger.exception("tenant status check failed for %s; allowing", ctx.tenant_id)
+        return ctx
+    if reason:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"This workspace is suspended. {reason}".strip(),
+        )
+    return ctx
+
+
 def _verify_api_key(request: Request) -> AuthContext | None:
     """Authenticate via X-API-Key, or return None if no key was presented."""
     presented = request.headers.get("X-API-Key", "").strip()
@@ -268,8 +310,8 @@ def _decode_dev_token(token: str) -> AuthContext:
 
 
 def require_auth(request: Request) -> AuthContext:
-    """FastAPI dependency: any authenticated tenant member."""
-    return _verify_bearer_token(request)
+    """FastAPI dependency: any authenticated, non-suspended tenant member."""
+    return _enforce_tenant_status(_verify_bearer_token(request))
 
 
 # Platform administrators — the operator of the whole service, not a role
@@ -299,13 +341,20 @@ def is_platform_admin(auth: AuthContext) -> bool:
     return bool(candidates & allowed)
 
 
-def require_platform_admin(auth: AuthContext = Depends(require_auth)) -> AuthContext:
+def require_platform_admin(request: Request) -> AuthContext:
     """Gate for cross-tenant endpoints.
 
     Returns 404, not 403: a 403 confirms the platform API exists and that the
     caller found a real route, which is free reconnaissance for anyone probing
     a tenant account against it. To a non-admin these routes are simply absent.
+
+    Deliberately verifies the credential WITHOUT the tenant-suspension check.
+    Platform administration is orthogonal to membership of any one workspace,
+    and an operator is usually a member of one. Inheriting the check meant
+    suspending your own workspace locked you out of the console that suspends
+    — with no way to undo it. Found by a test, which is where that belongs.
     """
+    auth = _verify_bearer_token(request)
     if not is_platform_admin(auth):
         logger.warning(
             "platform admin access denied for uid=%s tenant=%s", auth.uid, auth.tenant_id

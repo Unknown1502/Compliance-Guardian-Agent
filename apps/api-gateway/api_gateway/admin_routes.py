@@ -12,8 +12,14 @@
                        (CG_PLATFORM_ADMIN_UIDS), never from a role. Roles are
                        handed out by POST /api/team, so a "founder" role could
                        be minted by any tenant owner inviting themselves.
-                     - Read-only. There is no cross-tenant write path here at
-                       all, so the console cannot alter a customer's records.
+                     - It can control ACCESS. It can never alter RECORDS.
+                       The single cross-tenant write is suspending or
+                       restoring a workspace's access; there is no path here
+                       that changes a document, a verdict, or an audit entry.
+                       A console able to rewrite compliance history would be a
+                       liability in a product whose whole claim is that
+                       history cannot be rewritten — but one unable to stop an
+                       abusive or non-paying tenant is merely incomplete.
                      - Every request is written to the append-only audit trail
                        before the data is returned. The product's promise is
                        that every access is accountable; the operator's own
@@ -37,7 +43,7 @@ from auth_middleware import (
     require_role,
 )
 from api_gateway.composition import RULESETS_ROOT
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from pydantic import BaseModel, Field
 from schema_validators import RulesetNotFoundError, load_ruleset
 
@@ -68,6 +74,24 @@ class JurisdictionResponse(BaseModel):
     rule_count: int
     # False when the request named the pair already in force, so the client
     # can say "no change" instead of claiming a move that did not happen.
+    changed: bool
+
+
+class ChangeTenantStatusRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    status: str = Field(pattern="^(active|suspended)$")
+    # Required, and required to be substantial. An operator who cannot say
+    # why in twelve characters has not decided yet, and the reason is shown
+    # to the customer at sign-in.
+    reason: str = Field(min_length=12, max_length=300)
+
+
+class TenantStatusResponse(BaseModel):
+    tenant_id: str
+    name: str
+    status: str
+    status_reason: str
     changed: bool
 
 
@@ -123,6 +147,10 @@ class PlatformTenantRow(BaseModel):
     jurisdiction: str
     plan_tier: str
     created_at: str
+    # active | suspended. Access state, not compliance state — a suspended
+    # workspace keeps every document and verdict it ever produced.
+    status: str = "active"
+    status_reason: str = ""
     members: int
     documents: int
     checks: int
@@ -525,6 +553,8 @@ def build_admin_router(gw) -> APIRouter:
 
             rows.append(
                 PlatformTenantRow(
+                    status=t.status.value if hasattr(t.status, "value") else str(t.status),
+                    status_reason=t.status_reason,
                     tenant_id=t.tenant_id,
                     name=t.name,
                     industry=t.industry,
@@ -843,6 +873,77 @@ def build_admin_router(gw) -> APIRouter:
             )
             for r in job.result()
         ]
+
+    @router.put("/platform/tenants/{tenant_id}/status", response_model=TenantStatusResponse)
+    def change_tenant_status(
+        req: ChangeTenantStatusRequest,
+        tenant_id: str = Path(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$"),
+        auth: AuthContext = Depends(require_platform_admin),
+    ) -> TenantStatusResponse:
+        """Suspend or restore a workspace's access to the platform.
+
+        The only write on this console, and deliberately narrow. It controls
+        ACCESS and nothing else: a suspended workspace cannot sign in and its
+        API keys stop working, but not one document, verdict or audit record
+        is altered. Everything the customer produced is exactly where they
+        left it, and is returned intact on reactivation.
+
+        That line is the point. An operator console that can rewrite a
+        customer's compliance history is a liability in a product whose whole
+        claim is that history cannot be rewritten. An operator console that
+        cannot stop an abusive or non-paying tenant is merely incomplete. So
+        this exists, and nothing broader does.
+
+        A reason is mandatory and is shown to the customer at sign-in, so it
+        has to be something a person can act on. It is also written to the
+        append-only trail with the operator's identity — suspending someone
+        is exactly the kind of action that should be impossible to do quietly.
+        """
+        from schema_validators import TenantStatus
+
+        g = gw()
+        tenant = g.repo.get_tenant(tenant_id)
+        before = tenant.status.value if hasattr(tenant.status, "value") else str(tenant.status)
+
+        if before == req.status:
+            # Not an error, but nothing happened — do not write an audit entry
+            # claiming a change that did not occur.
+            return TenantStatusResponse(
+                tenant_id=tenant.tenant_id,
+                name=tenant.name,
+                status=before,
+                status_reason=tenant.status_reason,
+                changed=False,
+            )
+
+        tenant.status = TenantStatus(req.status)
+        tenant.status_reason = req.reason if req.status == "suspended" else ""
+        g.repo.upsert_tenant(tenant)
+
+        g.auditor.log(
+            tenant_id=tenant_id,
+            actor=f"operator:{auth.email or auth.uid}",
+            action="tenant.suspended" if req.status == "suspended" else "tenant.reactivated",
+            # Timestamped, so suspending and restoring the same workspace
+            # twice produces two events rather than collapsing into one.
+            dedup_key=f"{req.status}:{datetime.now(timezone.utc).isoformat()}",
+            before_state={"status": before},
+            after_state={"status": req.status, "reason": tenant.status_reason},
+        )
+        logger.warning(
+            "tenant %s %s by %s: %s",
+            tenant_id,
+            req.status,
+            auth.uid,
+            req.reason,
+        )
+        return TenantStatusResponse(
+            tenant_id=tenant.tenant_id,
+            name=tenant.name,
+            status=req.status,
+            status_reason=tenant.status_reason,
+            changed=True,
+        )
 
     @router.get("/platform/rulesets", response_model=list[PlatformRuleset])
     def platform_rulesets(
