@@ -52,7 +52,6 @@ class Gateway:
         self.raw_bucket = raw_docs_bucket()
         self._gemini = None
         self._task_service = None
-        self._billing = None
         self._register_api_key_auth()
 
     def _register_api_key_auth(self) -> None:
@@ -91,15 +90,6 @@ class Gateway:
 
             self._gemini = GeminiClient()
         return self._gemini
-
-    # Lazy billing so every other endpoint works with no Stripe key
-    # configured; only /api/billing/* routes need this to succeed.
-    def billing(self):
-        if self._billing is None:
-            from billing import BillingClient
-
-            self._billing = BillingClient()
-        return self._billing
 
     def task_service(self) -> TaskService:
         """Build the task service + dispatcher on first use.

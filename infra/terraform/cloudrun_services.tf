@@ -85,56 +85,12 @@ resource "google_cloud_run_v2_service" "api_gateway" {
           }
         }
       }
-      env {
-        name  = "STRIPE_PRICE_ID_ONEOFF"
-        value = var.stripe_price_id_oneoff
-      }
-      env {
-        name  = "STRIPE_PRICE_ID_SUBSCRIPTION"
-        value = var.stripe_price_id_subscription
-      }
-      env {
-        name  = "STRIPE_CHECKOUT_SUCCESS_URL"
-        value = "https://${var.project_id}.web.app/billing?status=success"
-      }
-      env {
-        name  = "STRIPE_CHECKOUT_CANCEL_URL"
-        value = "https://${var.project_id}.web.app/billing?status=cancelled"
-      }
-      # Gated behind var.enable_billing — see variables.tf. A secret_key_ref
-      # pointing at a version-less secret fails Cloud Run revision creation
-      # outright, which would take the whole gateway down, not just billing.
-      # Only attach these once cg-stripe-secret-key and cg-stripe-webhook-secret
-      # both have a real version populated.
-      dynamic "env" {
-        for_each = var.enable_billing ? [1] : []
-        content {
-          name = "STRIPE_SECRET_KEY"
-          value_source {
-            secret_key_ref {
-              secret  = google_secret_manager_secret.stripe_secret_key.secret_id
-              version = "latest"
-            }
-          }
-        }
-      }
-      dynamic "env" {
-        for_each = var.enable_billing ? [1] : []
-        content {
-          name = "STRIPE_WEBHOOK_SECRET"
-          value_source {
-            secret_key_ref {
-              secret  = google_secret_manager_secret.stripe_webhook_secret.secret_id
-              version = "latest"
-            }
-          }
-        }
-      }
       # Appended at the END of this list on purpose. Cloud Run env blocks are
       # positional, so inserting one mid-list makes Terraform renumber every
-      # entry after it — including the secret_key_ref blocks for the Gemini and
-      # Stripe secrets. The resulting plan reads like those secrets are being
-      # rewritten, which is unreviewable on a production apply.
+      # entry after it — including the secret_key_ref blocks. The resulting
+      # plan reads like those secrets are being rewritten, which is
+      # unreviewable on a production apply. Read such a plan by NAME
+      # (terraform show -json), never by position.
       env {
         name  = "CG_REQUIRE_EMAIL_VERIFICATION"
         value = var.require_email_verification ? "1" : "0"
@@ -150,8 +106,7 @@ resource "google_cloud_run_v2_service" "api_gateway" {
       # --- Razorpay / PayPal -------------------------------------------
       # Appended at the end for the same positional reason documented above:
       # inserting these higher up would renumber every later env block and
-      # make an apply look like the Gemini and Stripe secrets were being
-      # rewritten.
+      # make an apply look like the Gemini secret was being rewritten.
       env {
         name  = "PAYPAL_LIVE"
         value = var.paypal_live ? "1" : "0"

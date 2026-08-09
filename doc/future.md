@@ -30,7 +30,7 @@ niche in an afternoon, not a sprint. Everything below depends on that.
   X" → that becomes the next ruleset. A product that visibly grows from
   real usage is a better story than one that grew from guessing.
 - **Self-serve billing, fully live.** Concierge-first by design during
-  launch; Stripe subscriptions come once demand is proven.
+  launch; recurring subscriptions come once demand is proven.
 - **Ingestion beyond manual upload.** Email-forward was in the original
   spec (`doc/development.md`). NDIS providers live in Outlook, not
   dashboards — meeting them there removes the last piece of adoption

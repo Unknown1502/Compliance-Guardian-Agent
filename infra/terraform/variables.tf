@@ -71,32 +71,6 @@ variable "enable_api_docs" {
   default     = false
 }
 
-variable "enable_billing" {
-  description = <<-EOT
-    Gates whether the Stripe secret_key_ref env vars are attached to the API
-    gateway container. Keep false until cg-stripe-secret-key and
-    cg-stripe-webhook-secret both have at least one real version populated —
-    Cloud Run fails to start a revision that references a secret with zero
-    versions, which would take down the ENTIRE gateway (signup, uploads,
-    everything), not just billing. Flip to true only after populating both
-    secrets via `gcloud secrets versions add` (see iam.tf).
-  EOT
-  type        = bool
-  default     = false
-}
-
-variable "stripe_price_id_oneoff" {
-  description = "Stripe Price ID for the one-off audit purchase. Set once created in the Stripe dashboard; irrelevant while enable_billing is false."
-  type        = string
-  default     = ""
-}
-
-variable "stripe_price_id_subscription" {
-  description = "Stripe Price ID for the monthly unlimited-audits subscription. Set once created in the Stripe dashboard; irrelevant while enable_billing is false."
-  type        = string
-  default     = ""
-}
-
 variable "platform_admin_uids" {
   description = <<-EOT
     Comma-separated UIDs or emails allowed to reach /api/platform/*, written
@@ -136,13 +110,11 @@ variable "admin_console_origin" {
 variable "enable_razorpay" {
   description = <<-EOT
     Gates the Razorpay secret_key_ref env vars on the API gateway. Same
-    hazard as enable_billing: a secret with zero versions makes the Cloud Run
-    revision fail to start, taking down the whole gateway rather than one
-    payment method. Flip to true only after cg-razorpay-key-id,
-    cg-razorpay-key-secret and cg-razorpay-webhook-secret all have a version.
-
-    Independent of enable_billing on purpose — Razorpay exists precisely so
-    payments can go live before Stripe's business verification completes.
+    hazard as every other secret gate: a secret with zero versions makes the
+    Cloud Run revision fail to start, taking down the whole gateway rather
+    than one payment method. Flip to true only after cg-razorpay-key-id,
+    cg-razorpay-key-secret and cg-razorpay-webhook-secret all have a
+    version.
   EOT
   type        = bool
   default     = false

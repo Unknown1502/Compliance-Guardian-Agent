@@ -6,7 +6,6 @@ import { useToast } from "../context/ToastContext";
 import {
   ApiError,
   capturePayPalOrder,
-  createCheckout,
   createPayPalOrder,
   createRazorpayOrder,
   getPaymentProviders,
@@ -44,13 +43,16 @@ const PLANS = [
 ];
 
 const PROVIDER_LABEL: Record<string, string> = {
-  stripe: "Card",
   razorpay: "Card / UPI / Netbanking",
   paypal: "PayPal",
 };
 
-/** Fallback list price, used only until /billing/providers answers. */
-const LIST_PRICE: Record<Plan, string> = { oneoff: "$50", subscription: "$99" };
+/**
+ * Shown only for the moment before /billing/providers answers with the real
+ * server-side price. Matches the Razorpay INR defaults rather than a USD
+ * figure, so the number does not visibly change currency once it loads.
+ */
+const LIST_PRICE: Record<Plan, string> = { oneoff: "₹4,200", subscription: "₹8,300" };
 
 function formatPrice(option: ProviderOption | undefined, plan: Plan): string {
   if (!option?.amount_minor || !option.currency) return LIST_PRICE[plan];
@@ -166,17 +168,6 @@ export function BillingView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
-  const payWithStripe = async (plan: Plan) => {
-    if (!session) return;
-    setBusy(`${plan}:stripe`);
-    try {
-      const { checkout_url } = await createCheckout(session, plan);
-      window.location.href = checkout_url;
-    } catch (err) {
-      fail(err);
-    }
-  };
-
   const payWithRazorpay = async (plan: Plan) => {
     if (!session) return;
     setBusy(`${plan}:razorpay`);
@@ -231,7 +222,6 @@ export function BillingView() {
   };
 
   const pay = (plan: Plan, provider: string) => {
-    if (provider === "stripe") return payWithStripe(plan);
     if (provider === "razorpay") return payWithRazorpay(plan);
     if (provider === "paypal") return payWithPayPal(plan);
   };

@@ -1,10 +1,9 @@
-"""Payment routes for every provider other than Stripe.
+"""Every payment route in the product.
 
-Stripe's own routes stay in main.py — they predate this module and Stripe
-Checkout hosts the whole flow, so there is nothing here it needs. What this
-adds is the ability to take money without a registered business: Razorpay
-(Indian sole proprietors), PayPal (international), and an operator-recorded
-offline path for a bank or UPI transfer that happened outside any gateway.
+Three ways to take money, none of them requiring a registered business:
+Razorpay (Indian sole proprietors, settles in INR), PayPal (international),
+and an operator-recorded offline path for a bank or UPI transfer that
+happened outside any gateway.
 
 The trust model is identical on every route, and it is the whole point of
 this file:
@@ -237,14 +236,9 @@ def build_payment_router(
 
         def options(plan: str) -> list[ProviderOption]:
             out: list[ProviderOption] = []
-            for provider in ("stripe", "razorpay", "paypal"):
-                ok = available.get(provider, False)
-                if not ok:
+            for provider in ("razorpay", "paypal"):
+                if not available.get(provider, False):
                     out.append(ProviderOption(provider=provider, available=False))
-                    continue
-                if provider == "stripe":
-                    # Stripe's amounts live in hosted Price objects, not here.
-                    out.append(ProviderOption(provider=provider, available=True))
                     continue
                 try:
                     price = price_for(provider, plan)

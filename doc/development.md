@@ -203,7 +203,7 @@ Weeks 1–2: auth, data model, ingestion agent. Weeks 3–4: compliance agent + 
 11. Evidence checklist for XPRIZE submission
 Signed-up/paying customers with names/contact (real, arms-length).
 
-Revenue export (Stripe/bank) by month.
+Revenue export (payment provider / bank) by month.
 
 Screenshots/logs proving Gemini + Google Cloud product usage in production.
 

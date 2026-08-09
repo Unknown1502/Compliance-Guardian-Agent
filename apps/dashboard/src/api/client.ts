@@ -170,18 +170,6 @@ export async function getActiveRuleset(
   return jsonOrThrow(await authedFetch(session, "/api/ruleset"));
 }
 
-export async function createCheckout(
-  session: Session,
-  plan: "oneoff" | "subscription",
-): Promise<{ checkout_url: string }> {
-  const res = await authedFetch(session, "/api/billing/checkout", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ plan }),
-  });
-  return jsonOrThrow(res);
-}
-
 /* --- Payments -------------------------------------------------------------
  *
  * Note what is never sent from here: an amount. The plan is a name; the
@@ -192,7 +180,7 @@ export async function createCheckout(
 export type Plan = "oneoff" | "subscription";
 
 export interface ProviderOption {
-  provider: "stripe" | "razorpay" | "paypal";
+  provider: "razorpay" | "paypal";
   available: boolean;
   amount_minor: number | null;
   currency: string | null;

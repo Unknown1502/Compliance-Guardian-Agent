@@ -147,7 +147,8 @@ _gateway: Gateway | None = None
 # Limiters are grouped by what a request costs rather than by URL:
 #   _auth_limiter      signup and any future credential-verifying route
 #   _expensive_limiter anything that spends money or calls a third party
-#                      (Gemini, BigQuery, Stripe, Slack, Firebase user creation)
+#                      (Gemini, BigQuery, payment providers, Slack, Firebase
+#                      user creation)
 #   _standard_limiter  ordinary authenticated reads and writes
 #   _upload_limiter    document upload (unchanged: 20 burst, 0.5/s)
 _RL = limits_from_env()
@@ -195,9 +196,9 @@ def gw() -> Gateway:
 # the product and benefits from living in one auditable file.
 app.include_router(build_admin_router(gw), prefix="/api")
 
-# Razorpay / PayPal / offline payments. Stripe's routes stay below in this
-# file. Limiter enforcement is passed in rather than imported so those routes
-# draw from these same buckets instead of getting a second budget.
+# Razorpay / PayPal / offline payments — every payment route in the product.
+# Limiter enforcement is passed in rather than imported so those routes draw
+# from these same buckets instead of getting a second budget.
 app.include_router(
     build_payment_router(
         gw,
@@ -384,14 +385,6 @@ class ReportResponse(BaseModel):
     used_fixture: bool
     # Empty when PDF rendering failed; the client then falls back to HTML.
     pdf_ref: str = ""
-
-
-class CheckoutRequest(StrictRequest):
-    plan: str = Field(pattern="^(oneoff|subscription)$")
-
-
-class CheckoutResponse(BaseModel):
-    checkout_url: str
 
 
 class RuleResponse(BaseModel):
@@ -1217,95 +1210,6 @@ def get_report(
     if not html_blob.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="report not found")
     return HTMLResponse(content=html_blob.download_as_text())
-
-
-# ---------------------------------------------------------------------------
-# Billing
-#
-# Card collection is entirely Stripe-hosted (Checkout) — no card data ever
-# reaches this service, so there is no PCI scope here. tenant_id for the
-# webhook comes ONLY from the Checkout Session's client_reference_id/
-# metadata, which we set ourselves from the authenticated session when
-# creating it — never trusted from client-supplied request bodies.
-# ---------------------------------------------------------------------------
-
-
-@app.post("/api/billing/checkout", response_model=CheckoutResponse)
-def create_checkout(
-    req: CheckoutRequest, auth: AuthContext = Depends(require_auth)
-) -> CheckoutResponse:
-    from billing import BillingConfigError
-
-    # Creates a real Stripe Checkout session per call — expensive tier.
-    _enforce(_expensive_limiter, auth.tenant_id, "checkout sessions")
-    try:
-        session = gw().billing().create_checkout_session(
-            tenant_id=auth.tenant_id, plan=req.plan, customer_email=auth.email
-        )
-    except BillingConfigError as exc:
-        # Stripe isn't configured yet (no account/keys). Fails as a normal
-        # 503, not a crash — every other endpoint keeps working. The
-        # underlying message can name config internals, so it is logged
-        # rather than returned.
-        logger.warning("billing not configured: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="billing is not available right now",
-        ) from exc
-    return CheckoutResponse(checkout_url=session.checkout_url)
-
-
-@app.post("/api/billing/webhook", status_code=status.HTTP_200_OK)
-async def billing_webhook(request: Request) -> dict:
-    from billing import BillingConfigError, WebhookSignatureError
-
-    # Public (Stripe calls it unauthenticated, authenticity comes from the
-    # signature). Limited per source IP so a forged-signature flood cannot
-    # spin the signature verifier indefinitely.
-    _enforce(_standard_limiter, f"webhook:{_client_ip(request)}", "billing webhook")
-    payload = await request.body()
-    signature = request.headers.get("stripe-signature", "")
-    g = gw()
-    try:
-        event = g.billing().parse_webhook(payload=payload, signature_header=signature)
-    except WebhookSignatureError as exc:
-        # Never echo the verifier's reasoning back — it tells a forger which
-        # part of their signature was wrong.
-        logger.warning("stripe webhook signature rejected: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="invalid signature"
-        ) from exc
-    except BillingConfigError as exc:
-        logger.warning("billing not configured for webhook: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="billing is not available right now",
-        ) from exc
-
-    if event.event_type != "checkout.session.completed" or not event.tenant_id:
-        # Ignore every other event type (e.g. later subscription lifecycle
-        # events) for now — acknowledge with 200 so Stripe doesn't retry.
-        return {"received": True, "handled": False}
-
-    tenant = g.repo.get_tenant(event.tenant_id)
-    new_tier = PlanTier.PRO if event.mode == "subscription" else PlanTier.STARTER
-    tenant.plan_tier = new_tier
-    g.repo.upsert_tenant(tenant)
-    g.auditor.log(
-        tenant_id=event.tenant_id,
-        actor="stripe-webhook",
-        action="billing.subscribed" if event.mode == "subscription" else "billing.purchased",
-        dedup_key=f"stripe:{event.stripe_event_id}",
-        before_state=None,
-        after_state={
-            "plan_tier": new_tier.value,
-            "amount_total": event.amount_total,
-            "currency": event.currency,
-            "stripe_customer_id": event.stripe_customer_id,
-            "stripe_event_id": event.stripe_event_id,
-        },
-    )
-    return {"received": True, "handled": True}
 
 
 # ---------------------------------------------------------------------------

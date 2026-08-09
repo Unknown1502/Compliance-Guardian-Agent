@@ -1,10 +1,15 @@
-"""Payment providers beyond Stripe.
+"""Payment providers.
 
-Why more than one: Stripe's live mode requires a registered business in most
-markets, which can take weeks. Razorpay accepts Indian sole proprietors,
-PayPal covers international customers, and an offline path records a real
-bank or UPI transfer that happened outside any gateway. A product that can
-only take money one way is a product that cannot take money.
+Why more than one: Razorpay accepts Indian sole proprietors and settles in
+INR without a conversion fee, PayPal covers international customers, and an
+offline path records a real bank or UPI transfer that happened outside any
+gateway. A product that can only take money one way is a product that cannot
+take money.
+
+Stripe was removed deliberately. Its live mode requires a registered
+business, which put revenue behind an approval that had not arrived, and its
+INR pricing went through a 4% currency conversion that made every Indian
+customer pay more for the same product.
 
 Security posture, identical across providers:
 
@@ -64,9 +69,8 @@ class VerifiedPayment:
 #
 # Prices live on the server. A client names a PLAN ("oneoff"), never an
 # amount — otherwise buying the unlimited tier for 1 rupee is a single edited
-# request away. Stripe enforces this with hosted Price objects; Razorpay and
-# PayPal take an amount on the wire, so the equivalent guarantee has to be
-# made here.
+# request away. Both Razorpay and PayPal take an amount on the wire, so that
+# guarantee has to be made here rather than by the provider.
 #
 # Currencies differ by provider on purpose: a Razorpay account activated for
 # domestic Indian payments settles in INR, while PayPal covers the same
@@ -408,7 +412,6 @@ def record_offline_payment(
 def configured_providers() -> dict[str, bool]:
     """Which providers this deployment can actually use right now."""
     return {
-        "stripe": bool(os.environ.get("STRIPE_SECRET_KEY")),
         "razorpay": Razorpay().configured,
         "paypal": PayPal().configured,
         "offline": True,  # always available; operator-only

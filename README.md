@@ -121,7 +121,7 @@ python scripts/demo_phase4.py
 | `CG_REQUIRE_EMAIL_VERIFICATION` | No | `0` | `1` → refuse Firebase sessions whose email is unverified (403). Off by default: enabling it retroactively locks out accounts created before verification existed |
 | `CG_RL_AUTH_CAPACITY` | No | `5` | Signup burst allowance per client IP |
 | `CG_RL_AUTH_REFILL_PER_SEC` | No | `0.0083` | Signup refill rate (1 per 2 min) |
-| `CG_RL_EXPENSIVE_CAPACITY` | No | `20` | Burst for endpoints that spend money or call a third party (Gemini, BigQuery, Stripe, Slack, Firebase user creation) |
+| `CG_RL_EXPENSIVE_CAPACITY` | No | `20` | Burst for endpoints that spend money or call a third party (Gemini, BigQuery, payment providers, Slack, Firebase user creation) |
 | `CG_RL_EXPENSIVE_REFILL_PER_SEC` | No | `0.033` | Refill rate for the expensive tier (1 per 30 s) |
 | `CG_RL_STANDARD_CAPACITY` | No | `120` | Burst for ordinary authenticated reads/writes |
 | `CG_RL_STANDARD_REFILL_PER_SEC` | No | `2.0` | Refill rate for the standard tier |

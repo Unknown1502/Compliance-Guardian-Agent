@@ -218,58 +218,10 @@ resource "google_secret_manager_secret_iam_member" "gateway_reads_gemini_key" {
 }
 
 # ---------------------------------------------------------------------------
-# Secret Manager — Stripe. Only the gateway calls Stripe (checkout creation +
-# webhook handling both live in api_gateway), so only cg_gateway gets access
-# — unlike the Gemini key, which every agent needs.
-#
-# Populate out-of-band once a real Stripe account exists, same pattern as
-# the Gemini key:
-#   echo -n "$STRIPE_SECRET_KEY" | gcloud secrets versions add cg-stripe-secret-key --data-file=-
-#   echo -n "$STRIPE_WEBHOOK_SECRET" | gcloud secrets versions add cg-stripe-webhook-secret --data-file=-
-# Until then, these secrets can be left with no version at all — every
-# billing endpoint fails as a clean 503, not a crash, and every other
-# endpoint (signup, upload, checks, reports) is completely unaffected. See
-# shared/billing/__init__.py for the lazy-construction behavior this relies on.
-# ---------------------------------------------------------------------------
-
-resource "google_secret_manager_secret" "stripe_secret_key" {
-  secret_id = "cg-stripe-secret-key"
-
-  replication {
-    auto {}
-  }
-
-  depends_on = [google_project_service.apis]
-}
-
-resource "google_secret_manager_secret" "stripe_webhook_secret" {
-  secret_id = "cg-stripe-webhook-secret"
-
-  replication {
-    auto {}
-  }
-
-  depends_on = [google_project_service.apis]
-}
-
-resource "google_secret_manager_secret_iam_member" "gateway_reads_stripe_secret_key" {
-  secret_id = google_secret_manager_secret.stripe_secret_key.secret_id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.cg_gateway.email}"
-}
-
-resource "google_secret_manager_secret_iam_member" "gateway_reads_stripe_webhook_secret" {
-  secret_id = google_secret_manager_secret.stripe_webhook_secret.secret_id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.cg_gateway.email}"
-}
-
-# ---------------------------------------------------------------------------
 # Secret Manager — Razorpay and PayPal. Same shape and the same reasoning as
-# the Stripe secrets above, for the same single consumer (the gateway).
+# the Gemini secret above, for a single consumer (the gateway).
 #
-# These exist because Stripe live mode requires a registered business, which
-# Razorpay does not. Each provider is gated by its own variable so switching
+# Each provider is gated by its own variable so switching
 # one on does not require the other to be configured — an unpopulated secret
 # attached to the container is a revision that will not start, and that would
 # take down the whole gateway rather than one payment method.

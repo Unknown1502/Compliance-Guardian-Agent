@@ -81,7 +81,7 @@ class RateLimitSettings:
                   exponential backoff on top.
       public    — reachable without a bearer token. Moderate.
       expensive — spends money or reaches a third party per call (Gemini,
-                  BigQuery, Stripe, Slack, Firebase user creation).
+                  BigQuery, payment providers, Slack, Firebase user creation).
       standard  — ordinary authenticated reads and writes. Loosest.
     """
 
