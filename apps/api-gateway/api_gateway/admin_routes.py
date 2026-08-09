@@ -37,8 +37,9 @@ from auth_middleware import (
     require_role,
 )
 from api_gateway.composition import RULESETS_ROOT
-from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field
+from schema_validators import RulesetNotFoundError, load_ruleset
 
 logger = logging.getLogger("cg.gateway.admin")
 
@@ -46,6 +47,28 @@ logger = logging.getLogger("cg.gateway.admin")
 # ---------------------------------------------------------------------------
 # Response models
 # ---------------------------------------------------------------------------
+
+
+# Same tokens the ruleset loader accepts. Constrained here so a crafted value
+# is a clean 422 rather than something that reaches the filesystem at all.
+_RULESET_TOKEN_PATTERN = r"^[a-z0-9_-]{1,64}$"
+
+
+class ChangeJurisdictionRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    industry: str = Field(pattern=_RULESET_TOKEN_PATTERN)
+    jurisdiction: str = Field(pattern=_RULESET_TOKEN_PATTERN)
+
+
+class JurisdictionResponse(BaseModel):
+    industry: str
+    jurisdiction: str
+    rule_set_version: str
+    rule_count: int
+    # False when the request named the pair already in force, so the client
+    # can say "no change" instead of claiming a move that did not happen.
+    changed: bool
 
 
 class TenantAdminOverview(BaseModel):
@@ -225,6 +248,103 @@ def build_admin_router(gw) -> APIRouter:
     # -----------------------------------------------------------------------
     # Tenant admin — one workspace, ordinary tenant scoping.
     # -----------------------------------------------------------------------
+
+    @router.put("/admin/jurisdiction", response_model=JurisdictionResponse)
+    def change_jurisdiction(
+        req: ChangeJurisdictionRequest,
+        auth: AuthContext = Depends(require_role("owner", "admin")),
+    ) -> JurisdictionResponse:
+        """Move a workspace to a different industry / jurisdiction.
+
+        Exists because the pair was previously fixed at signup with no way to
+        change it, so a business that picked wrong — or expanded into another
+        market — had to abandon the workspace and its entire audit history.
+
+        Owner and admin, stated explicitly rather than written as
+        require_role("owner"): 'admin' implicitly satisfies every role check
+        in this codebase, so the narrower spelling would read as owner-only
+        while behaving identically. Allowing admin is also consistent — an
+        admin can already approve and reject compliance decisions, so which
+        ruleset those decisions cite is not a larger power than they hold.
+
+        Two properties worth stating explicitly:
+
+          * The pair is validated by actually loading the ruleset before
+            anything is written, so a workspace can never be left pointing at
+            rules that do not exist.
+          * Past checks are NOT re-evaluated. Every completed verdict stays
+            cited to the ruleset that was genuinely applied at the time, which
+            is the only honest thing an audit trail can do. The change is
+            recorded as its own event, so the trail shows precisely when the
+            applicable rules changed and who changed them.
+        """
+        g = gw()
+        tenant = g.repo.get_tenant(auth.tenant_id)
+        before = (tenant.industry, tenant.jurisdiction)
+        # Case-insensitive, because rulesets on disk are lowercase (au.yaml)
+        # while tenants created before this endpoint stored "AU". Comparing
+        # raw values would treat a genuine no-op as a change and write an
+        # audit event saying the jurisdiction moved when it did not.
+        unchanged = (before[0].lower(), before[1].lower()) == (
+            req.industry.lower(),
+            req.jurisdiction.lower(),
+        )
+
+        try:
+            ruleset = load_ruleset(RULESETS_ROOT, req.industry, req.jurisdiction)
+        except (RulesetNotFoundError, ValueError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"no ruleset for industry={req.industry!r} "
+                    f"jurisdiction={req.jurisdiction!r}"
+                ),
+            ) from exc
+
+        if unchanged:
+            # Not an error, but nothing happened — do not write a misleading
+            # audit event saying the jurisdiction changed when it did not.
+            return JurisdictionResponse(
+                industry=tenant.industry,
+                jurisdiction=tenant.jurisdiction,
+                rule_set_version=ruleset.rule_set_version,
+                rule_count=len(ruleset.rules),
+                changed=False,
+            )
+
+        tenant.industry = req.industry
+        tenant.jurisdiction = req.jurisdiction
+        g.repo.upsert_tenant(tenant)
+        g.auditor.log(
+            tenant_id=auth.tenant_id,
+            actor=auth.email or auth.uid,
+            action="workspace.jurisdiction_changed",
+            # Keyed on the destination so a double-submit collapses, but a
+            # genuine later change back is still its own event.
+            dedup_key=f"{req.industry}/{req.jurisdiction}",
+            before_state={"industry": before[0], "jurisdiction": before[1]},
+            after_state={
+                "industry": req.industry,
+                "jurisdiction": req.jurisdiction,
+                "rule_set_version": ruleset.rule_set_version,
+            },
+        )
+        logger.info(
+            "tenant %s moved from %s/%s to %s/%s by %s",
+            auth.tenant_id,
+            before[0],
+            before[1],
+            req.industry,
+            req.jurisdiction,
+            auth.uid,
+        )
+        return JurisdictionResponse(
+            industry=req.industry,
+            jurisdiction=req.jurisdiction,
+            rule_set_version=ruleset.rule_set_version,
+            rule_count=len(ruleset.rules),
+            changed=True,
+        )
 
     @router.get("/admin/overview", response_model=TenantAdminOverview)
     def tenant_admin_overview(

@@ -12,38 +12,7 @@ import {
   type RulesetOptionRow,
 } from "../api/client";
 
-/**
- * Display names for the ruleset codes on disk.
- *
- * A lookup, not a source of truth: anything missing here falls back to the
- * raw code, so adding a ruleset YAML makes it selectable immediately without
- * a frontend change. The server decides what exists; this only decides how
- * it reads.
- */
-const INDUSTRY_LABEL: Record<string, string> = {
-  healthcare_ndis: "NDIS / disability services",
-  aged_care: "Aged care",
-  bookkeeping: "Bookkeeping & payroll",
-  data_privacy: "Data privacy & protection",
-  contract_review: "Contract review",
-};
-
-const JURISDICTION_LABEL: Record<string, string> = {
-  au: "Australia",
-  in: "India",
-  eu: "European Union",
-  uk: "United Kingdom",
-  "us-ca": "United States (California)",
-  ca: "Canada",
-  sg: "Singapore",
-  br: "Brazil",
-  cn: "China",
-  ae: "United Arab Emirates",
-  za: "South Africa",
-  generic: "Any jurisdiction",
-};
-
-const label = (map: Record<string, string>, key: string) => map[key] ?? key;
+import { INDUSTRY_LABEL, JURISDICTION_LABEL, label } from "../lib/rulesetLabels";
 
 const DEMO_TENANTS = [
   { id: "tenant-sunrise-care", label: "Sunrise Community Care (NDIS)" },

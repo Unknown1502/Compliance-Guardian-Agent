@@ -14,10 +14,15 @@ import {
 } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import {
+  changeJurisdiction,
   fetchTenantAdminOverview,
+  getAvailableRulesets,
+  type RulesetOptionRow,
   type TenantAdminOverview,
 } from "../api/client";
+import { INDUSTRY_LABEL, JURISDICTION_LABEL, label } from "../lib/rulesetLabels";
 import { Card, CardHeader, PageHeading } from "../components/ui/Card";
+import { Button } from "../components/ui/Button";
 import { StatCard } from "../components/ui/StatCard";
 import { DecisionBreakdown } from "../components/ui/DecisionBreakdown";
 import { EmptyState } from "../components/ui/EmptyState";
@@ -53,11 +58,150 @@ function Row({
   );
 }
 
+/**
+ * Move the workspace to a different industry / jurisdiction.
+ *
+ * Exists because the pair used to be fixed at signup forever: a business that
+ * picked wrong, or expanded into another market, had to abandon the workspace
+ * and its entire audit history to correct it.
+ *
+ * The copy is deliberately blunt about two things — that this changes which
+ * law future checks apply, and that it does NOT re-check past documents. A
+ * user who assumes their history was re-evaluated would be badly misled.
+ */
+function JurisdictionCard({
+  current,
+  onChanged,
+}: {
+  current: { industry: string; jurisdiction: string };
+  onChanged: () => void;
+}) {
+  const { session } = useAuth();
+  const [rulesets, setRulesets] = useState<RulesetOptionRow[]>([]);
+  const [industry, setIndustry] = useState(current.industry.toLowerCase());
+  const [jurisdiction, setJurisdiction] = useState(current.jurisdiction.toLowerCase());
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    getAvailableRulesets()
+      .then((rows) => live && setRulesets(rows))
+      .catch(() => live && setRulesets([]));
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const industries = Array.from(new Set(rulesets.map((r) => r.industry)));
+  const jurisdictions = rulesets.filter((r) => r.industry === industry);
+  const selected = jurisdictions.find((r) => r.jurisdiction === jurisdiction);
+  const isCurrent =
+    industry === current.industry.toLowerCase() &&
+    jurisdiction === current.jurisdiction.toLowerCase();
+
+  const save = async () => {
+    if (!session) return;
+    setBusy(true);
+    setError(null);
+    setNote(null);
+    try {
+      const r = await changeJurisdiction(session, industry, jurisdiction);
+      setNote(
+        r.changed
+          ? `Moved to ${label(INDUSTRY_LABEL, r.industry)} · ${label(
+              JURISDICTION_LABEL,
+              r.jurisdiction,
+            )}. New checks use ${r.rule_count} rules (v${r.rule_set_version}).`
+          : "That is already this workspace's ruleset — nothing changed.",
+      );
+      if (r.changed) onChanged();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const field =
+    "mt-1 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-[13px] dark:border-slate-800 dark:bg-slate-900";
+
+  return (
+    <Card className="mt-4">
+      <CardHeader
+        title="Applicable rules"
+        subtitle="Which industry and jurisdiction this workspace is checked against."
+      />
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="block">
+          <span className="text-[12px] text-slate-500 dark:text-slate-400">Industry</span>
+          <select
+            className={field}
+            value={industry}
+            disabled={rulesets.length === 0}
+            onChange={(e) => {
+              const next = e.target.value;
+              setIndustry(next);
+              const first = rulesets.find((r) => r.industry === next);
+              if (first) setJurisdiction(first.jurisdiction);
+            }}
+          >
+            {industries.map((i) => (
+              <option key={i} value={i}>
+                {label(INDUSTRY_LABEL, i)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block">
+          <span className="text-[12px] text-slate-500 dark:text-slate-400">Jurisdiction</span>
+          <select
+            className={field}
+            value={jurisdiction}
+            disabled={rulesets.length === 0}
+            onChange={(e) => setJurisdiction(e.target.value)}
+          >
+            {jurisdictions.map((r) => (
+              <option key={r.jurisdiction} value={r.jurisdiction}>
+                {label(JURISDICTION_LABEL, r.jurisdiction)}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <p className="mt-3 flex items-start gap-2 text-[12px] text-slate-500 dark:text-slate-400">
+        <AlertTriangle size={14} className="mt-0.5 shrink-0 text-status-warn" />
+        <span>
+          Changing this affects <strong>future</strong> checks only. Documents already checked
+          keep the verdicts and citations from the ruleset that was actually applied at the
+          time — they are not re-evaluated, and the change itself is recorded in your audit
+          trail.
+          {selected ? ` The selected ruleset has ${selected.rule_count} rules.` : ""}
+        </span>
+      </p>
+
+      <div className="mt-3 flex items-center gap-3">
+        <Button onClick={save} loading={busy} disabled={isCurrent || rulesets.length === 0}>
+          {isCurrent ? "No change to save" : "Change applicable rules"}
+        </Button>
+        {note && <span className="text-[12.5px] text-status-good">{note}</span>}
+        {error && <span className="text-[12.5px] text-status-bad">{error}</span>}
+      </div>
+    </Card>
+  );
+}
+
 export function WorkspaceAdmin() {
   const { session } = useAuth();
   const [data, setData] = useState<TenantAdminOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Bumped after a jurisdiction change so the header re-reads the workspace
+  // rather than showing the ruleset that was in force a moment ago.
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     if (!session) return;
@@ -71,7 +215,7 @@ export function WorkspaceAdmin() {
     return () => {
       cancelled = true;
     };
-  }, [session]);
+  }, [session, reloadKey]);
 
   return (
     <div className="space-y-6">
@@ -107,7 +251,8 @@ export function WorkspaceAdmin() {
                 <>
                   <span className="font-mono-num">{data.tenant_id}</span>
                   {" · "}
-                  {data.industry} / {data.jurisdiction}
+                  {label(INDUSTRY_LABEL, data.industry)} ·{" "}
+                  {label(JURISDICTION_LABEL, data.jurisdiction)}
                   {" · "}
                   <span className="capitalize">{data.plan_tier}</span> plan
                   {data.created_at ? ` · since ${data.created_at.split("T")[0]}` : ""}
@@ -146,6 +291,11 @@ export function WorkspaceAdmin() {
               />
             </div>
           </Card>
+
+          <JurisdictionCard
+            current={{ industry: data.industry, jurisdiction: data.jurisdiction }}
+            onChanged={() => setReloadKey((k) => k + 1)}
+          />
 
           <div className="grid gap-6 lg:grid-cols-2">
             <Card>

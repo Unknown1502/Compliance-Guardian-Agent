@@ -57,6 +57,33 @@ export async function getAvailableRulesets(): Promise<RulesetOptionRow[]> {
   return jsonOrThrow(await fetch(`${API_BASE_URL}/api/rulesets/available`));
 }
 
+export interface JurisdictionChange {
+  industry: string;
+  jurisdiction: string;
+  rule_set_version: string;
+  rule_count: number;
+  changed: boolean;
+}
+
+/**
+ * Move the caller's workspace to a different industry / jurisdiction.
+ *
+ * Owner or admin. Does not re-check past documents — completed verdicts stay
+ * cited to the ruleset actually applied at the time.
+ */
+export async function changeJurisdiction(
+  session: Session,
+  industry: string,
+  jurisdiction: string,
+): Promise<JurisdictionChange> {
+  const res = await authedFetch(session, "/api/admin/jurisdiction", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ industry, jurisdiction }),
+  });
+  return jsonOrThrow(res);
+}
+
 export async function signup(
   email: string,
   password: string,
