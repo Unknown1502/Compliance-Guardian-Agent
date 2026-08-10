@@ -20,11 +20,9 @@
 
 import { Link } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
+import { LEGAL, LEGAL_ROUTES } from "../lib/legal";
 
-const OPERATOR = "Prajwal Annasaheb Sutar";
-const LOCATION = "Georai, Maharashtra 431127, India";
-const SUPPORT_EMAIL = "prajwalsutar116@gmail.com";
-const LAST_UPDATED = "9 August 2026";
+const SUPPORT_EMAIL = LEGAL.supportEmail;
 
 function Page({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -38,7 +36,9 @@ function Page({ title, children }: { title: string; children: React.ReactNode })
             <ArrowLeft size={14} />
             ComplianceGuardian
           </Link>
-          <span className="text-[12px] text-muted">Last updated {LAST_UPDATED}</span>
+          <span className="text-[12px] text-muted">
+            v{LEGAL.version} · Effective {LEGAL.effectiveDate} · Updated {LEGAL.lastUpdated}
+          </span>
         </div>
       </header>
 
@@ -49,10 +49,11 @@ function Page({ title, children }: { title: string; children: React.ReactNode })
 
       <footer className="border-t border-line py-8">
         <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-center gap-x-5 gap-y-2 px-6 text-[12.5px] text-muted">
-          <Link to="/terms" className="hover:text-ink">Terms</Link>
-          <Link to="/privacy" className="hover:text-ink">Privacy</Link>
-          <Link to="/refunds" className="hover:text-ink">Refunds</Link>
-          <Link to="/contact" className="hover:text-ink">Contact</Link>
+          {LEGAL_ROUTES.map((r) => (
+            <Link key={r.to} to={r.to} className="hover:text-ink">
+              {r.label}
+            </Link>
+          ))}
         </div>
       </footer>
     </div>
@@ -82,8 +83,10 @@ export function TermsPage() {
   return (
     <Page title="Terms of Service">
       <p>
-        These terms govern your use of ComplianceGuardian, operated by {OPERATOR}, a sole
-        proprietor based in {LOCATION}. By creating an account you agree to them.
+        These terms govern your use of {LEGAL.brand}, the compliance-analysis service
+        available at {LEGAL.siteUrl}. By creating an account you agree to them. Where these
+        terms say &ldquo;we&rdquo; or &ldquo;us&rdquo;, they mean {LEGAL.brand}; where they say
+        &ldquo;you&rdquo;, they mean the organisation whose workspace is being used.
       </p>
 
       <NotAdvice />
@@ -154,8 +157,8 @@ export function TermsPage() {
 
       <H>Governing law</H>
       <p>
-        These terms are governed by the laws of India, and the courts of Maharashtra have
-        jurisdiction over any dispute.
+        These terms are governed by the laws of {LEGAL.governingLaw}, and the courts of{" "}
+        {LEGAL.governingLaw} have jurisdiction over any dispute arising from them.
       </p>
 
       <H>Changes</H>
@@ -173,8 +176,8 @@ export function PrivacyPage() {
   return (
     <Page title="Privacy Policy">
       <p>
-        This policy explains what ComplianceGuardian collects, why, and who else touches it.
-        The service is operated by {OPERATOR}, {LOCATION}.
+        This policy explains what {LEGAL.brand} collects, why, and who else touches it. It
+        applies to the service at {LEGAL.siteUrl} and to everything you upload to it.
       </p>
 
       <H>What we collect</H>
@@ -346,7 +349,9 @@ export function ContactPage() {
   return (
     <Page title="Contact Us">
       <p>
-        ComplianceGuardian is operated by {OPERATOR}, a sole proprietor registered in India.
+        {LEGAL.brand} is a compliance-analysis service operating from {LEGAL.governingLaw}. The
+        fastest route to a person is email — we do not run a phone line, and saying so is more
+        useful than publishing a number nobody answers.
       </p>
 
       <div className="rounded-lg border border-line bg-surface-2 p-5">
@@ -360,16 +365,19 @@ export function ContactPage() {
             </dd>
           </div>
           <div>
-            <dt className="font-semibold text-ink">Business name</dt>
-            <dd>ComplianceGuardian ({OPERATOR})</dd>
+            <dt className="font-semibold text-ink">Service</dt>
+            <dd>{LEGAL.brand}</dd>
           </div>
           <div>
-            <dt className="font-semibold text-ink">Address</dt>
-            <dd>Veer Lahuji Nagar, Near SBI, {LOCATION}</dd>
+            <dt className="font-semibold text-ink">Operating from</dt>
+            <dd>{LEGAL.governingLaw}</dd>
           </div>
           <div>
-            <dt className="font-semibold text-ink">Response time</dt>
-            <dd>Within 2 business days. Refund requests within 3.</dd>
+            <dt className="font-semibold text-ink">Response target</dt>
+            <dd>
+              {LEGAL.supportTarget}. Refund requests {LEGAL.refundTarget}. These are targets we
+              aim at, not a contractual service level.
+            </dd>
           </div>
         </dl>
       </div>

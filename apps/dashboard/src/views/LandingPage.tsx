@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { LEGAL, LEGAL_ROUTES } from "../lib/legal";
 import {
   ShieldCheck,
   ArrowRight,
@@ -370,15 +371,18 @@ export function LandingPage() {
           <div className="flex w-full flex-col items-center justify-between gap-4 sm:flex-row">
             <Logo />
             <nav className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-[12.5px] text-ink-2">
-              <Link to="/terms" className="hover:text-ink">Terms of Service</Link>
-              <Link to="/privacy" className="hover:text-ink">Privacy Policy</Link>
-              <Link to="/refunds" className="hover:text-ink">Refunds &amp; Cancellation</Link>
-              <Link to="/contact" className="hover:text-ink">Contact Us</Link>
+              {LEGAL_ROUTES.map((r) => (
+                <Link key={r.to} to={r.to} className="hover:text-ink">
+                  {r.label}
+                </Link>
+              ))}
             </nav>
           </div>
+          {/* Brand only. No individual is named here, and no legal entity is
+              implied that does not exist — see lib/legal.ts. */}
           <p className="text-center text-[12.5px] text-muted">
-            © {new Date().getFullYear()} ComplianceGuardian, operated by Prajwal Annasaheb Sutar,
-            Georai, Maharashtra, India. Built for the XPRIZE Build with Gemini Hackathon.
+            © {new Date().getFullYear()} {LEGAL.brand}. Compliance analysis with cited rules and
+            an auditable record.
           </p>
         </div>
       </footer>
