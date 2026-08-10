@@ -82,7 +82,11 @@ from api_gateway.rate_limit import (
     TokenBucketRateLimiter,
     limits_from_env,
 )
-from api_gateway.upload_validation import ContentMismatchError, validate_upload
+from api_gateway.upload_validation import (
+    ContentMismatchError,
+    sniff_content_type,
+    validate_upload,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("cg.gateway")
@@ -797,6 +801,40 @@ def get_document(
     )
 
 
+# Worth distinguishing once the bytes are already known to be text.
+_TEXT_EXTENSIONS = {".csv": "text/csv", ".json": "application/json"}
+
+
+def _resolve_content_type(doc, data: bytes, blob_path: str) -> str:
+    """Work out what a stored document actually is.
+
+    Records written before the content_type field existed carry none, and
+    defaulting those to application/octet-stream made the review screen
+    offer a plain-text file as an opaque download instead of displaying it.
+
+    The stored type wins when present because it was validated against the
+    bytes at upload. Otherwise the bytes themselves are the answer — we
+    already have them in hand, so this costs nothing and needs no backfill.
+
+    Refining a sniffed text/plain by file extension is display-only and
+    safe: the content has already been confirmed text-decodable, so a
+    misleading extension can at worst pick the wrong text subtype. A
+    misleading extension can never promote text to a binary type, because
+    binary types are only ever returned from a magic-byte match.
+    """
+    declared = getattr(doc, "content_type", "") or ""
+    if declared:
+        return declared
+
+    sniffed = sniff_content_type(data)
+    if sniffed is None:
+        return "application/octet-stream"
+    if sniffed == "text/plain":
+        _, dot, ext = blob_path.rpartition(".")
+        return _TEXT_EXTENSIONS.get(f".{ext.lower()}" if dot else "", "text/plain")
+    return sniffed
+
+
 @app.get("/api/documents/{document_id}/content", response_model=DocumentContentResponse)
 def get_document_content(
     document_id: str = id_path(), auth: AuthContext = Depends(require_auth)
@@ -841,7 +879,7 @@ def get_document_content(
 
     stored_hash = getattr(doc, "content_hash", "") or ""
     actual_hash = hashlib.sha256(data).hexdigest()
-    content_type = getattr(doc, "content_type", "") or "application/octet-stream"
+    content_type = _resolve_content_type(doc, data, blob_path)
 
     text: str | None = None
     b64: str | None = None
