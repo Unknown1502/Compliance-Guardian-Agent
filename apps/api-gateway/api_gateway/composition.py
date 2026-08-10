@@ -14,7 +14,12 @@ import os
 import time
 
 from audit_logger import AuditLogger
-from auth_middleware import AuthContext, set_api_key_resolver, set_tenant_status_resolver
+from auth_middleware import (
+    SERVICE_ROLE,
+    AuthContext,
+    set_api_key_resolver,
+    set_tenant_status_resolver,
+)
 from escalation_service.notifications import AuditNotifier
 from notifications import SlackNotifier
 from gcp_clients import (
@@ -75,12 +80,14 @@ class Gateway:
             if record is None:
                 return None
             repo.touch_api_key(record.key_id)
-            # API keys act with owner rights; scoping still comes from the
-            # key's own tenant_id, so cross-tenant access remains impossible.
+            # A machine identity, NOT an owner. Scoping still comes from the
+            # key's own tenant_id so cross-tenant access remains impossible,
+            # and SERVICE_ROLE additionally means the key cannot manage the
+            # workspace or decide escalations — see auth_middleware.
             return AuthContext(
                 uid=f"api_key:{record.key_id}",
                 tenant_id=record.tenant_id,
-                role="owner",
+                role=SERVICE_ROLE,
                 email=None,
             )
 

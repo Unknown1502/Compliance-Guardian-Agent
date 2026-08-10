@@ -39,7 +39,25 @@ logger = logging.getLogger("cg.auth")
 
 _init_lock = threading.Lock()
 
+# Roles a PERSON can hold. Assignable via POST /api/team.
 VALID_ROLES = frozenset({"owner", "reviewer", "admin"})
+
+# The identity an API key authenticates as. Deliberately NOT in VALID_ROLES:
+# it cannot be assigned to a person, and no require_role() call names it, so a
+# key satisfies require_auth and nothing else.
+#
+# It used to be "owner", which meant a key created for a CI pipeline could
+# change the workspace's jurisdiction, add and remove team members, alter
+# retention, and mint further API keys. That last one is the dangerous part —
+# a leaked key could establish its own persistence, so revoking the leaked
+# key would not end the compromise. Keys live in CI config and env files and
+# leak far more readily than passwords, so they get the narrowest identity
+# that still does the job.
+#
+# It is also deliberately not "reviewer": approving a compliance escalation is
+# a human judgement, and the product's human-review guarantee is worth
+# nothing if a machine credential can satisfy it.
+SERVICE_ROLE = "service"
 
 # LOCAL-ONLY dev auth. When CG_AUTH_DEV_MODE=1, the middleware accepts tokens of
 # the form "dev:<base64url(json claims)>" instead of verifying a real Firebase
@@ -396,12 +414,24 @@ def require_role(*allowed: str):
     """FastAPI dependency factory: authenticated AND role in `allowed`.
 
     'admin' implicitly satisfies every role check.
+
+    SERVICE_ROLE satisfies none of them. An API key can use the endpoints that
+    only need require_auth — upload, check, read results — and is refused
+    everywhere management or human judgement is involved.
     """
     unknown = set(allowed) - VALID_ROLES
     if unknown:
         raise ValueError(f"unknown roles in require_role: {sorted(unknown)}")
 
     def dependency(auth: AuthContext = Depends(require_auth)) -> AuthContext:
+        if auth.role == SERVICE_ROLE:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "API keys cannot perform this action. Sign in as a person "
+                    "to manage the workspace."
+                ),
+            )
         if auth.role != "admin" and auth.role not in allowed:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
