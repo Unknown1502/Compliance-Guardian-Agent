@@ -257,6 +257,26 @@ resource "google_secret_manager_secret" "payment_secrets" {
   depends_on = [google_project_service.apis]
 }
 
+# Transactional email for support notifications. Created empty; support runs
+# in-app until a version exists, and the product never claims to have sent
+# mail it did not.
+#   printf %s "$RESEND_API_KEY" | gcloud secrets versions add cg-resend-api-key --data-file=-
+resource "google_secret_manager_secret" "resend_api_key" {
+  secret_id = "cg-resend-api-key"
+
+  replication {
+    auto {}
+  }
+
+  depends_on = [google_project_service.apis]
+}
+
+resource "google_secret_manager_secret_iam_member" "gateway_reads_resend_key" {
+  secret_id = google_secret_manager_secret.resend_api_key.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.cg_gateway.email}"
+}
+
 resource "google_secret_manager_secret_iam_member" "gateway_reads_payment_secrets" {
   for_each  = google_secret_manager_secret.payment_secrets
   secret_id = each.value.secret_id

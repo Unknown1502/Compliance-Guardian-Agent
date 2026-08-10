@@ -107,6 +107,45 @@ variable "admin_console_origin" {
   default     = ""
 }
 
+variable "support_agents" {
+  description = <<-EOT
+    Comma-separated operator emails permitted to REPLY to support tickets,
+    written to CG_SUPPORT_AGENTS on the gateway.
+
+    Deliberately separate from platform_admin_uids. Reading the support inbox
+    and writing to customers in the company's name are different powers, and
+    conflating them means every operator can send mail on the company's behalf
+    by accident.
+
+    Empty means nobody can reply — closed by default, which is the right
+    failure mode for a permission that speaks as the company. Declared here
+    rather than set by hand because an env var Terraform does not know about
+    is an env var the next apply deletes.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "resend_api_key_secret" {
+  description = <<-EOT
+    Whether to attach the Resend email secret to the gateway. Keep false until
+    cg-resend-api-key has a real version — a secret_key_ref to a version-less
+    secret makes the Cloud Run revision fail to start, taking down the whole
+    gateway rather than just email.
+
+    While false, support runs fully in-app: tickets are recorded and threads
+    work, and the product never claims to have sent mail it did not.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "support_from_email" {
+  description = "Verified sender address for support email. Empty disables sending."
+  type        = string
+  default     = ""
+}
+
 variable "enable_razorpay" {
   description = <<-EOT
     Gates the Razorpay secret_key_ref env vars on the API gateway. Same

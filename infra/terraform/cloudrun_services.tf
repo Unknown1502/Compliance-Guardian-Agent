@@ -108,6 +108,28 @@ resource "google_cloud_run_v2_service" "api_gateway" {
       # inserting these higher up would renumber every later env block and
       # make an apply look like the Gemini secret was being rewritten.
       env {
+        # Who may reply to customers. Closed by default; see variables.tf for
+        # why this is separate from platform admin.
+        name  = "CG_SUPPORT_AGENTS"
+        value = var.support_agents
+      }
+      env {
+        name  = "SUPPORT_FROM_EMAIL"
+        value = var.support_from_email
+      }
+      dynamic "env" {
+        for_each = var.resend_api_key_secret ? [1] : []
+        content {
+          name = "RESEND_API_KEY"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.resend_api_key.secret_id
+              version = "latest"
+            }
+          }
+        }
+      }
+      env {
         name  = "PAYPAL_LIVE"
         value = var.paypal_live ? "1" : "0"
       }
