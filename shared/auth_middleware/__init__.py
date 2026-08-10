@@ -26,6 +26,7 @@ import base64
 import binascii
 import json
 import logging
+import secrets
 import os
 import threading
 from dataclasses import dataclass
@@ -96,21 +97,49 @@ def create_tenant_owner(*, email: str, password: str, tenant_id: str) -> str:
     return user.uid
 
 
-def create_tenant_member(*, email: str, password: str, tenant_id: str, role: str) -> str:
-    """Create an additional Firebase Auth user inside an EXISTING tenant.
+def create_tenant_member(*, email: str, tenant_id: str, role: str) -> tuple[str, str]:
+    """Invite a member to an EXISTING tenant. Returns (uid, set_password_link).
+
+    NOBODY ELSE EVER KNOWS THIS PERSON'S PASSWORD — not the owner who invited
+    them, not an operator, not this function. That is a correctness
+    requirement, not politeness.
+
+    The previous design had the owner type a password and pass it on. It meant
+    an owner could sign in as any reviewer, which quietly destroys the
+    product's central guarantee: an audit entry reading "reviewer Asha
+    approved this check" is not evidence of anything if the owner chose Asha's
+    password. Attributability is the thing this product sells, and it has to
+    hold at the account layer or it holds nowhere.
+
+    So the account is created with a long random secret that is generated
+    here, never returned, and never stored anywhere we can read. The invitee
+    receives a Firebase password-reset link and chooses their own. The random
+    value exists only because Firebase requires a password at creation; it is
+    unguessable and immediately unusable once they set their own.
 
     Same claim discipline as create_tenant_owner: tenant_id and role are set
     server-side at creation, so the member's first ID token already carries
-    them. role is validated against VALID_ROLES by the caller before this is
-    reached; validated again here because these claims are the only thing
-    standing between a member and another tenant's data.
+    them, and role is re-validated here because these claims are the only
+    thing standing between a member and another tenant's data.
     """
     _ensure_firebase_app()
     if role not in VALID_ROLES:
         raise ValueError(f"invalid role {role!r}")
-    user = fb_auth.create_user(email=email, password=password)
+
+    # Discarded immediately. Never logged, never returned, never persisted.
+    throwaway = secrets.token_urlsafe(32)
+    user = fb_auth.create_user(email=email, password=throwaway)
     fb_auth.set_custom_user_claims(user.uid, {"tenant_id": tenant_id, "role": role})
-    return user.uid
+
+    try:
+        link = fb_auth.generate_password_reset_link(email)
+    except Exception:
+        # The account exists and is usable; only the convenience link failed.
+        # Deleting the user here would be worse — it would turn a transient
+        # Firebase hiccup into a half-created member.
+        logger.exception("could not generate set-password link for %s", email)
+        link = ""
+    return user.uid, link
 
 
 def delete_tenant_member(*, uid: str, tenant_id: str) -> None:

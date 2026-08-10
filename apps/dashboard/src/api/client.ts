@@ -374,10 +374,24 @@ export async function listTeam(session: Session): Promise<TeamMember[]> {
   return jsonOrThrow(await authedFetch(session, "/api/team"));
 }
 
+export interface InviteResult extends TeamMember {
+  /** One-time Firebase link for the member to choose their own password. */
+  set_password_link: string;
+  invite_emailed: boolean;
+}
+
+/**
+ * Invite a member.
+ *
+ * No password is sent, and the API rejects one outright. The member sets
+ * their own via the returned link — so nobody, including the owner who
+ * invited them, ever knows their credentials. That is what keeps an audit
+ * entry attributable to the person named on it.
+ */
 export async function addTeamMember(
   session: Session,
-  body: { email: string; password: string; role: string; job_title: string },
-): Promise<TeamMember> {
+  body: { email: string; role: string; job_title: string },
+): Promise<InviteResult> {
   return jsonOrThrow(
     await authedFetch(session, "/api/team", {
       method: "POST",

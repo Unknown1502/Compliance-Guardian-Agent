@@ -474,6 +474,23 @@ class CreateApiKeyRequest(StrictRequest):
     name: str = Field(default="", max_length=120)
 
 
+class InviteResult(BaseModel):
+    """The created member, plus how they get in.
+
+    set_password_link is returned so an owner can pass it on when email is not
+    configured. It is a one-time Firebase link, not a password — the owner
+    still never learns the member's credentials.
+    """
+
+    uid: str
+    email: str
+    role: str
+    job_title: str
+    created_at: str
+    set_password_link: str = ""
+    invite_emailed: bool = False
+
+
 class TeamMemberResponse(BaseModel):
     uid: str
     email: str
@@ -484,11 +501,7 @@ class TeamMemberResponse(BaseModel):
 
 class InviteMemberRequest(StrictRequest):
     email: str = Field(min_length=3, max_length=320, pattern=_EMAIL_PATTERN)
-    password: str = Field(min_length=8, max_length=4096)
-    # Constrained at the schema so an unknown role is a 422 before any
-    # Firebase user is created; still re-checked against VALID_ROLES in the
-    # handler, which is the single source of truth for the role set.
-    role: str = Field(default="reviewer", pattern="^(owner|reviewer|admin)$")
+    role: str = Field(min_length=1, max_length=32)
     job_title: str = Field(default="", max_length=120)
 
 
@@ -1336,19 +1349,24 @@ def list_team(auth: AuthContext = Depends(require_auth)) -> list[TeamMemberRespo
 
 @app.post(
     "/api/team",
-    response_model=TeamMemberResponse,
+    response_model=InviteResult,
     status_code=status.HTTP_201_CREATED,
 )
 def invite_team_member(
     req: InviteMemberRequest,
     auth: AuthContext = Depends(require_role("owner", "admin")),
 ) -> TeamMemberResponse:
-    """Add a member to the caller's OWN tenant.
+    """Invite a member to the caller's OWN tenant.
 
-    NOTE: there is no email delivery in this system, so this creates the
-    account directly with a password the owner sets and passes on out of
-    band. It is deliberately not called an 'invite' in the UI, because no
-    invite email is ever sent.
+    The owner never chooses or sees the member's password. The account is
+    created with a discarded random secret and the member sets their own via a
+    Firebase link — emailed to them when a provider is configured, otherwise
+    returned here for the owner to pass on.
+
+    This is not politeness. An owner who knows a reviewer's password can sign
+    in as them, which makes "reviewer Asha approved this check" unprovable.
+    Attributability is what this product sells, so it has to hold at the
+    account layer.
     """
     # Creates a real Firebase Auth user per call — expensive tier.
     _enforce(_expensive_limiter, auth.tenant_id, "team member creation")
@@ -1358,9 +1376,8 @@ def invite_team_member(
             detail=f"invalid role {req.role!r}; expected one of {sorted(VALID_ROLES)}",
         )
     try:
-        uid = create_tenant_member(
+        uid, set_password_link = create_tenant_member(
             email=req.email,
-            password=req.password,
             tenant_id=auth.tenant_id,  # never client-supplied
             role=req.role,
         )
@@ -1392,12 +1409,37 @@ def invite_team_member(
         before_state=None,
         after_state={"uid": uid, "email": req.email, "role": req.role, "job_title": req.job_title},
     )
-    return TeamMemberResponse(
+    # Email the link if a provider is configured. Best-effort: the member
+    # account exists either way, and the owner still has the link to pass on.
+    emailed = False
+    if set_password_link:
+        from support_notify import EmailNotifier
+
+        emailed = EmailNotifier().send(
+            to=req.email,
+            subject="You have been added to a ComplianceGuardian workspace",
+            body=(
+                f"You have been added to a workspace on ComplianceGuardian as "
+                f"a {req.role}.\n\n"
+                f"Set your password to sign in:\n{set_password_link}\n\n"
+                f"Nobody else knows or can see your password - not even the "
+                f"person who added you. That matters here: the decisions you "
+                f"record are attributed to you.\n\n"
+                f"- ComplianceGuardian"
+            ),
+        )
+
+    return InviteResult(
         uid=user.uid,
         email=user.email,
         role=user.role,
         job_title=user.job_title,
         created_at=user.created_at.isoformat(),
+        # Returned so the owner can pass it on when email is unconfigured.
+        # It is a one-time Firebase link, not a credential — the owner still
+        # never learns the member's password.
+        set_password_link=set_password_link,
+        invite_emailed=emailed,
     )
 
 

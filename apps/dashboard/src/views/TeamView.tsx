@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { UserPlus, Users, Trash2, ShieldAlert } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { useToast } from "../context/ToastContext";
-import { listTeam, addTeamMember, removeTeamMember, ApiError, type TeamMember } from "../api/client";
+import { listTeam, addTeamMember, type InviteResult, removeTeamMember, ApiError, type TeamMember } from "../api/client";
 import { PageHeading } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { EmptyState } from "../components/ui/EmptyState";
@@ -30,9 +30,9 @@ export function TeamView() {
   const [confirmUid, setConfirmUid] = useState<string | null>(null);
 
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [role, setRole] = useState("reviewer");
   const [jobTitle, setJobTitle] = useState("");
+  const [invite, setInvite] = useState<InviteResult | null>(null);
 
   const canManage = session?.role === "owner" || session?.role === "admin";
 
@@ -53,14 +53,14 @@ export function TeamView() {
     setBusy(true);
     setError(null);
     try {
-      await addTeamMember(session, { email, password, role, job_title: jobTitle });
+      const invited = await addTeamMember(session, { email, role, job_title: jobTitle });
+      setInvite(invited);
       toast.push({
         kind: "success",
         title: "Member added",
-        description: `${email} can now sign in as ${role}.`,
+        description: `${email} was added as ${role}. They set their own password next.`,
       });
       setEmail("");
-      setPassword("");
       setJobTitle("");
       setOpen(false);
       load();
@@ -111,16 +111,54 @@ export function TeamView() {
 
       {error && <p className="mb-4 text-[13px] text-status-critical">{error}</p>}
 
+      {invite && (
+        <div className="mb-4 rounded-xl border border-green-200 bg-green-50 p-4 dark:border-green-900/60 dark:bg-green-950/25">
+          <p className="text-[13.5px] font-semibold text-status-good">
+            {invite.email} has been added as {invite.role}.
+          </p>
+          {invite.invite_emailed ? (
+            <p className="mt-1 text-[12.5px] text-ink-2">
+              We emailed them a link to set their password.
+            </p>
+          ) : (
+            <>
+              <p className="mt-1 text-[12.5px] text-ink-2">
+                Email is not configured on this deployment, so send them this link yourself.
+                It lets them set their own password — it is not a password, and you still
+                cannot sign in as them.
+              </p>
+              <div className="mt-2 flex items-center gap-2">
+                <code className="min-w-0 flex-1 truncate rounded border border-line bg-surface px-2 py-1 text-[11.5px]">
+                  {invite.set_password_link || "Link could not be generated — ask them to use Forgot password."}
+                </code>
+                {invite.set_password_link && (
+                  <button
+                    type="button"
+                    onClick={() => navigator.clipboard?.writeText(invite.set_password_link)}
+                    className="shrink-0 rounded-lg border border-line px-2.5 py-1 text-[12px] font-medium text-ink hover:bg-surface-2"
+                  >
+                    Copy
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       {open && canManage && (
         <form
           onSubmit={submit}
           className="mb-6 rounded-xl border border-line bg-surface p-5"
         >
           <h3 className="text-[14px] font-semibold text-ink">Add a team member</h3>
-          {/* Stated plainly: there is no email delivery in this system. */}
+          {/* You cannot set someone else's password here, and that is the
+              point: an owner who knows a reviewer's password can sign in as
+              them, which would make every decision attributed to that
+              reviewer unprovable. */}
           <p className="mt-1 text-[12.5px] text-ink-2">
-            This creates the account immediately. No invitation email is sent — set a
-            password here and pass it to them yourself.
+            They will receive a link to set their own password. You never see it — which is
+            what keeps the decisions they record attributable to them.
           </p>
 
           <div className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -143,18 +181,6 @@ export function TeamView() {
                 value={jobTitle}
                 onChange={(e) => setJobTitle(e.target.value)}
                 placeholder="Quality &amp; Safeguarding Lead"
-              />
-            </label>
-            <label className="block">
-              <span className={LABEL}>Temporary password</span>
-              <input
-                type="text"
-                required
-                minLength={6}
-                className={FIELD}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="at least 6 characters"
               />
             </label>
             <label className="block">

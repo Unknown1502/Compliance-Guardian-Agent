@@ -306,13 +306,14 @@ class TestTeam:
         c, fake = client
         import api_gateway.main as main
 
-        monkeypatch.setattr(main, "create_tenant_member", lambda **kw: "uid-new-member")
+        monkeypatch.setattr(
+            main, "create_tenant_member", lambda **kw: ("uid-new-member", "https://reset.link/abc")
+        )
         r = c.post(
             "/api/team",
             headers={"Authorization": f"Bearer {_dev_token('u1','tenant-a','owner')}"},
             json={
                 "email": "reviewer@x.example",
-                "password": "hunter2hunter2",
                 "role": "reviewer",
                 "job_title": "Quality Lead",
             },
@@ -320,6 +321,50 @@ class TestTeam:
         assert r.status_code == 201, r.text
         assert r.json()["job_title"] == "Quality Lead"
         assert fake.repo.users["uid-new-member"].tenant_id == "tenant-a"
+        # The member sets their own password via this link.
+        assert r.json()["set_password_link"] == "https://reset.link/abc"
+
+    def test_the_owner_cannot_set_the_members_password(self, client, monkeypatch):
+        """The property this endpoint exists to protect.
+
+        An owner who knows a reviewer's password can sign in as them, which
+        makes "reviewer Asha approved this check" unprovable. Attributability
+        is what this product sells, so the request contract refuses a password
+        outright rather than ignoring one that is sent.
+        """
+        c, _ = client
+        import api_gateway.main as main
+
+        monkeypatch.setattr(
+            main, "create_tenant_member", lambda **kw: ("uid-x", "https://reset.link/x")
+        )
+        r = c.post(
+            "/api/team",
+            headers={"Authorization": f"Bearer {_dev_token('u1','tenant-a','owner')}"},
+            json={
+                "email": "reviewer@x.example",
+                "role": "reviewer",
+                "password": "chosen-by-the-owner",
+            },
+        )
+        assert r.status_code == 422
+        assert "password" in r.text
+
+    def test_a_failed_link_does_not_block_the_invite(self, client, monkeypatch):
+        """The account is usable even if the convenience link could not be made."""
+        c, fake = client
+        import api_gateway.main as main
+
+        monkeypatch.setattr(main, "create_tenant_member", lambda **kw: ("uid-nolink", ""))
+        r = c.post(
+            "/api/team",
+            headers={"Authorization": f"Bearer {_dev_token('u1','tenant-a','owner')}"},
+            json={"email": "reviewer2@x.example", "role": "reviewer"},
+        )
+        assert r.status_code == 201
+        assert r.json()["set_password_link"] == ""
+        assert r.json()["invite_emailed"] is False
+        assert fake.repo.users["uid-nolink"].tenant_id == "tenant-a"
 
     def test_invalid_role_rejected(self, client):
         """An unknown role is refused by the schema, before any user is created.
