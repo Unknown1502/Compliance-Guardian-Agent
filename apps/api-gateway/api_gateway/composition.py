@@ -59,72 +59,7 @@ class Gateway:
         self.raw_bucket = raw_docs_bucket()
         self._gemini = None
         self._task_service = None
-        self._register_api_key_auth()
-        self._register_tenant_status()
 
-    def _register_api_key_auth(self) -> None:
-        """Teach auth_middleware how to resolve an X-API-Key header.
-
-        Injected here so the middleware itself has no datastore dependency,
-        and so the tenant on the resolved context comes from the stored key
-        record — the caller never supplies it.
-        """
-        from api_keys import hash_api_key, looks_like_api_key
-
-        repo = self.repo
-
-        def resolve(plaintext: str):
-            if not looks_like_api_key(plaintext):
-                return None
-            record = repo.find_api_key_by_hash(hash_api_key(plaintext))
-            if record is None:
-                return None
-            repo.touch_api_key(record.key_id)
-            # A machine identity, NOT an owner. Scoping still comes from the
-            # key's own tenant_id so cross-tenant access remains impossible,
-            # and SERVICE_ROLE additionally means the key cannot manage the
-            # workspace or decide escalations — see auth_middleware.
-            return AuthContext(
-                uid=f"api_key:{record.key_id}",
-                tenant_id=record.tenant_id,
-                role=SERVICE_ROLE,
-                email=None,
-            )
-
-        set_api_key_resolver(resolve)
-
-    def _register_tenant_status(self) -> None:
-        """Teach auth_middleware to refuse suspended workspaces.
-
-        Cached for a short window because this runs on EVERY authenticated
-        request and would otherwise add a Firestore read to each one. The
-        trade is explicit: a suspension takes up to TTL seconds to bite. For
-        stopping abuse or chasing a failed payment that is fine; if it ever
-        needs to be instant, the answer is a push invalidation, not a longer
-        hot path.
-
-        Fails open on a datastore error — see _enforce_tenant_status. A blip
-        in Firestore must not lock every customer out of the product.
-        """
-        repo = self.repo
-        ttl = float(os.environ.get("CG_TENANT_STATUS_TTL_SECONDS", "30"))
-        cache: dict[str, tuple[float, str]] = {}
-
-        def resolve(tenant_id: str) -> str:
-            now = time.monotonic()
-            hit = cache.get(tenant_id)
-            if hit and now - hit[0] < ttl:
-                return hit[1]
-            tenant = repo.get_tenant(tenant_id)
-            reason = ""
-            if getattr(tenant, "status", None) == "suspended" or (
-                getattr(getattr(tenant, "status", None), "value", None) == "suspended"
-            ):
-                reason = tenant.status_reason or "Contact support to restore access."
-            cache[tenant_id] = (now, reason)
-            return reason
-
-        set_tenant_status_resolver(resolve)
 
     # Lazy Gemini so read/decision paths work without a key.
     def gemini(self):
@@ -187,3 +122,95 @@ class _Deferred:
 
     def dispatch(self, *, target: str, payload: dict) -> str:  # pragma: no cover
         raise RuntimeError("dispatcher not yet bound")
+
+
+def register_auth_resolvers(get_gateway) -> None:
+    """Install both auth resolvers at import time, before any request.
+
+    These used to be registered inside Gateway.__init__, which could not
+    work for API keys. Authentication runs as a FastAPI dependency, i.e.
+    strictly before the route handler — and the handler is the only thing
+    that calls gw(). So on an instance whose first caller presented an API
+    key, the resolver was still unset, the request 401'd with "API key
+    authentication is not configured", the handler never ran, and the
+    Gateway that would have registered the resolver was never built. Keys
+    worked only on an instance that happened to serve a signed-in user
+    first, which is why they appeared to work in testing and failed in
+    production.
+
+    The suspension resolver had the same defect with a worse failure mode:
+    unset, it fails open, so a suspended workspace kept working until some
+    unrelated request built a Gateway on that instance.
+
+    Registering here fixes both. The Gateway is still built lazily — it is
+    resolved inside the closures, on first use — so import stays cheap and
+    a Firestore outage at boot cannot crash the container.
+    """
+    _register_api_key_auth(get_gateway)
+    _register_tenant_status(get_gateway)
+
+
+def _register_api_key_auth(get_gateway) -> None:
+    """Teach auth_middleware how to resolve an X-API-Key header.
+
+    Injected so the middleware itself has no datastore dependency, and so
+    the tenant on the resolved context comes from the stored key record —
+    the caller never supplies it.
+    """
+    from api_keys import hash_api_key, looks_like_api_key
+
+    def resolve(plaintext: str):
+        # Shape-checked first so a junk header never reaches the datastore,
+        # and so building the Gateway is not a side effect of a bad guess.
+        if not looks_like_api_key(plaintext):
+            return None
+        repo = get_gateway().repo
+        record = repo.find_api_key_by_hash(hash_api_key(plaintext))
+        if record is None:
+            return None
+        repo.touch_api_key(record.key_id)
+        # A machine identity, NOT an owner. Scoping still comes from the
+        # key's own tenant_id so cross-tenant access remains impossible,
+        # and SERVICE_ROLE additionally means the key cannot manage the
+        # workspace or decide escalations — see auth_middleware.
+        return AuthContext(
+            uid=f"api_key:{record.key_id}",
+            tenant_id=record.tenant_id,
+            role=SERVICE_ROLE,
+            email=None,
+        )
+
+    set_api_key_resolver(resolve)
+
+
+def _register_tenant_status(get_gateway) -> None:
+    """Teach auth_middleware to refuse suspended workspaces.
+
+    Cached for a short window because this runs on EVERY authenticated
+    request and would otherwise add a Firestore read to each one. The
+    trade is explicit: a suspension takes up to TTL seconds to bite. For
+    stopping abuse or chasing a failed payment that is fine; if it ever
+    needs to be instant, the answer is a push invalidation, not a longer
+    hot path.
+
+    Fails open on a datastore error — see _enforce_tenant_status. A blip
+    in Firestore must not lock every customer out of the product.
+    """
+    ttl = float(os.environ.get("CG_TENANT_STATUS_TTL_SECONDS", "30"))
+    cache: dict[str, tuple[float, str]] = {}
+
+    def resolve(tenant_id: str) -> str:
+        now = time.monotonic()
+        hit = cache.get(tenant_id)
+        if hit and now - hit[0] < ttl:
+            return hit[1]
+        tenant = get_gateway().repo.get_tenant(tenant_id)
+        reason = ""
+        if getattr(tenant, "status", None) == "suspended" or (
+            getattr(getattr(tenant, "status", None), "value", None) == "suspended"
+        ):
+            reason = tenant.status_reason or "Contact support to restore access."
+        cache[tenant_id] = (now, reason)
+        return reason
+
+    set_tenant_status_resolver(resolve)

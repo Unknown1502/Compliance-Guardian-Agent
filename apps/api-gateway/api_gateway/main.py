@@ -74,7 +74,7 @@ from schema_validators import (
 )
 
 from api_gateway.admin_routes import build_admin_router
-from api_gateway.composition import RULESETS_ROOT, Gateway
+from api_gateway.composition import RULESETS_ROOT, Gateway, register_auth_resolvers
 from api_gateway.payment_routes import build_payment_router
 from api_gateway.support_routes import build_support_router
 from api_gateway.rate_limit import (
@@ -191,6 +191,15 @@ def gw() -> Gateway:
     if _gateway is None:
         _gateway = Gateway()
     return _gateway
+
+
+# Auth resolvers are registered HERE, at import, not inside Gateway.__init__.
+# Authentication is a FastAPI dependency and therefore runs before the route
+# handler, while gw() is only ever called by a handler — so a resolver
+# installed by the Gateway could never be installed by an API-key request:
+# it would 401 first and the handler would never run. Cheap by design: the
+# Gateway is still built lazily, inside the resolver closures.
+register_auth_resolvers(gw)
 
 
 # Tenant admin (/api/admin/*) and platform admin (/api/platform/*). Kept in

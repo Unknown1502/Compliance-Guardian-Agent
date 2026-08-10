@@ -230,8 +230,27 @@ function ApiKeysPanel({ canManage }: { canManage: boolean }) {
     <Panel
       title="API keys"
       icon={KeyRound}
-      description="Programmatic access. Send the key as an X-API-Key header. A key acts only within this workspace."
+      description="Lets another system send documents for checking without a person signing in — your document store, an intake form, a nightly job. Most workspaces never need one."
     >
+      {/* A key is a machine credential. It can do the work, and nothing else:
+          it cannot manage the team, change the jurisdiction, approve an
+          escalation, or create another key. Keys live in CI config and env
+          files and leak far more easily than passwords, so a leaked key must
+          not be able to establish its own persistence. */}
+      <div className="mb-4 rounded-lg border border-line bg-surface-2 p-3.5">
+        <p className="text-[12.5px] font-medium text-ink">What a key can do</p>
+        <p className="mt-1 text-[12.5px] text-ink-2">
+          Upload a document, run a compliance check, and read the result — inside this
+          workspace only. Send it as an <code className="font-mono-num">X-API-Key</code> header.
+        </p>
+        <p className="mt-2.5 text-[12.5px] font-medium text-ink">What it cannot do</p>
+        <p className="mt-1 text-[12.5px] text-ink-2">
+          Manage the team, change your jurisdiction, alter retention, or create another
+          key. It also cannot approve or reject an escalation — that is a human judgement,
+          and a machine credential must not be able to stand in for a reviewer.
+        </p>
+      </div>
+
       {justCreated && (
         <div className="mb-4 rounded-lg border border-brand-200 bg-brand-50 p-3.5">
           <p className="text-[12.5px] font-semibold text-brand-800">
@@ -279,7 +298,10 @@ function ApiKeysPanel({ canManage }: { canManage: boolean }) {
       </form>
 
       {keys.length === 0 ? (
-        <p className="text-[12.5px] text-muted">No keys yet.</p>
+        <p className="text-[12.5px] text-muted">
+          No keys yet — and you only need one if another system will be sending documents
+          on your behalf. People sign in instead.
+        </p>
       ) : (
         <ul className="divide-y divide-line">
           {keys.map((k) => (
