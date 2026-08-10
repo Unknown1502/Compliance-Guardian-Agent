@@ -217,7 +217,7 @@ class TestPdfRendering:
         def boom(**_kwargs):
             raise RuntimeError("pdf engine exploded")
 
-        monkeypatch.setattr(reporter, "_render_pdf", boom)
+        monkeypatch.setattr(reporter, "render_report_pdf", boom)
         outcome, storage = self._outcome()
         assert outcome.pdf_ref == ""
         assert outcome.content_ref.endswith("/report.html")
@@ -232,7 +232,8 @@ class TestOutputEscaping:
     HOSTILE = "</div><script>alert('xss')</script><div>"
 
     def _render(self, summary: str, patterns=None):
-        from reporting_agent.reporter import _render_html, _render_pdf
+        from reporting_agent.pdf_report import TenantProfile, render_report_pdf
+        from reporting_agent.reporter import _render_html
 
         kwargs = dict(
             report_id="rep-1",
@@ -254,7 +255,11 @@ class TestOutputEscaping:
             model_name="gemini-2.5-flash",
             prompt_version="reporting_v1",
         )
-        return _render_html(**kwargs), _render_pdf(**kwargs)
+        pdf = render_report_pdf(
+            **{k: v for k, v in kwargs.items() if k != "tenant_id"},
+            tenant=TenantProfile(tenant_id=kwargs["tenant_id"]),
+        )
+        return _render_html(**kwargs), pdf
 
     def test_script_tag_in_summary_is_escaped_in_html(self):
         html_doc, _ = self._render(self.HOSTILE)

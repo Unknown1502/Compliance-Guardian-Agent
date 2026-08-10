@@ -47,6 +47,7 @@ from gcp_clients.firestore_repo import FirestoreRepo
 from google.cloud import bigquery, firestore, storage
 from schema_validators import ReportRow
 
+from reporting_agent.pdf_report import TenantProfile, render_report_pdf
 from reporting_agent.prompts import (
     REPORTING_PROMPT_VERSION,
     REPORTING_SYSTEM_INSTRUCTION,
@@ -54,6 +55,28 @@ from reporting_agent.prompts import (
 )
 
 logger = logging.getLogger("cg.reporting")
+
+
+def _tenant_profile(db: firestore.Client, tenant_id: str) -> TenantProfile:
+    """Look up who the report is about.
+
+    The document is headed with the business's own name and the framework it
+    was assessed against; an internal id on a filed document tells the reader
+    nothing. Never allowed to fail the report — an unreadable tenant record
+    costs identity on the cover, not the report itself, and TenantProfile
+    falls back to the id.
+    """
+    try:
+        tenant = FirestoreRepo(db).get_tenant(tenant_id)
+    except Exception:
+        logger.exception("could not load tenant %s for report identity", tenant_id)
+        return TenantProfile(tenant_id=tenant_id)
+    return TenantProfile(
+        tenant_id=tenant_id,
+        name=getattr(tenant, "name", "") or "",
+        industry=getattr(tenant, "industry", "") or "",
+        jurisdiction=getattr(tenant, "jurisdiction", "") or "",
+    )
 
 
 @dataclass(frozen=True)
@@ -148,166 +171,6 @@ def _render_html(
 </div>
 </body>
 </html>"""
-
-
-def _render_pdf(
-    *,
-    report_id: str,
-    tenant_id: str,
-    period_start: datetime,
-    period_end: datetime,
-    stats: dict,
-    gemini_data: dict,
-    used_fixture: bool,
-    model_name: str,
-    prompt_version: str,
-) -> bytes:
-    """Render the report as a PDF, built from the data rather than from HTML.
-
-    reportlab is pure Python, so the container stays on python:3.11-slim with
-    no cairo/pango/browser layer to install, patch and carry.
-
-    Everything interpolated is escaped: reportlab's Paragraph takes a small
-    markup dialect, so an unescaped '<' in a Gemini summary is a rendering
-    failure at best and injected markup at worst — the same exposure the HTML
-    renderer has, through a different parser.
-    """
-    from reportlab.lib import colors
-    from reportlab.lib.enums import TA_LEFT
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-    from reportlab.lib.units import mm
-    from reportlab.platypus import (
-        HRFlowable,
-        ListFlowable,
-        ListItem,
-        Paragraph,
-        SimpleDocTemplate,
-        Spacer,
-        Table,
-        TableStyle,
-    )
-
-    def esc(value) -> str:
-        return html.escape(str(value))
-
-    buf = BytesIO()
-    doc = SimpleDocTemplate(
-        buf,
-        pagesize=A4,
-        leftMargin=20 * mm,
-        rightMargin=20 * mm,
-        topMargin=18 * mm,
-        bottomMargin=18 * mm,
-        title=f"Compliance Report — {tenant_id}",
-        author="ComplianceGuardian",
-        subject=f"{period_start.date()} to {period_end.date()}",
-    )
-
-    base = getSampleStyleSheet()
-    h1 = ParagraphStyle(
-        "cgH1", parent=base["Heading1"], fontSize=20, spaceAfter=2, textColor=colors.HexColor("#1D4ED8")
-    )
-    h2 = ParagraphStyle(
-        "cgH2", parent=base["Heading2"], fontSize=12, spaceBefore=14, spaceAfter=6,
-        textColor=colors.HexColor("#374151"),
-    )
-    body = ParagraphStyle(
-        "cgBody", parent=base["BodyText"], fontSize=9.5, leading=14, alignment=TA_LEFT
-    )
-    meta = ParagraphStyle(
-        "cgMeta", parent=base["BodyText"], fontSize=7.5, leading=11,
-        textColor=colors.HexColor("#9CA3AF"),
-    )
-
-    story: list = [
-        Paragraph("Compliance Report", h1),
-        Paragraph(
-            f"{esc(tenant_id)} &nbsp;·&nbsp; {period_start.date()} to {period_end.date()}", meta
-        ),
-        Spacer(1, 4),
-        HRFlowable(width="100%", thickness=0.7, color=colors.HexColor("#E5E7EB")),
-    ]
-
-    if used_fixture:
-        story += [
-            Spacer(1, 8),
-            Paragraph(
-                "<b>Note:</b> the executive summary below was generated with a fixture, "
-                "not a live AI model, because no API key was configured. Regenerate once "
-                "a key is set for a real Gemini-authored summary.",
-                ParagraphStyle(
-                    "cgWarn", parent=body, fontSize=8.5,
-                    textColor=colors.HexColor("#92400E"),
-                    backColor=colors.HexColor("#FEF3C7"),
-                    borderPadding=6, leading=12,
-                ),
-            ),
-        ]
-
-    story += [Paragraph("Summary statistics", h2)]
-    table = Table(
-        [
-            ["Documents reviewed", "Auto-approved", "Escalated", "Rejected"],
-            [
-                str(stats["total_checks"]),
-                str(stats["auto_approved"]),
-                str(stats["escalated"]),
-                str(stats["rejected"]),
-            ],
-        ],
-        colWidths=[42 * mm] * 4,
-    )
-    table.setStyle(
-        TableStyle(
-            [
-                ("FONTSIZE", (0, 0), (-1, 0), 8),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#6B7280")),
-                ("FONTNAME", (0, 1), (-1, 1), "Helvetica-Bold"),
-                ("FONTSIZE", (0, 1), (-1, 1), 17),
-                ("TEXTCOLOR", (0, 1), (-1, 1), colors.HexColor("#111827")),
-                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("TOPPADDING", (0, 0), (-1, 0), 8),
-                ("BOTTOMPADDING", (0, 1), (-1, 1), 10),
-                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F9FAFB")),
-                ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#E5E7EB")),
-                ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#E5E7EB")),
-            ]
-        )
-    )
-    story += [table]
-
-    top_patterns = gemini_data.get("top_3_risk_patterns") or stats.get("top_failing_rule_ids", [])
-    story += [Paragraph("Top recurring risk patterns", h2)]
-    if top_patterns:
-        story += [
-            ListFlowable(
-                [ListItem(Paragraph(esc(p), body), leftIndent=12) for p in top_patterns],
-                bulletType="bullet",
-                start="•",
-            )
-        ]
-    else:
-        story += [Paragraph("None identified in this period.", body)]
-
-    story += [
-        Paragraph("Executive summary", h2),
-        Paragraph(esc(gemini_data.get("executive_summary", "No summary available.")), body),
-        Spacer(1, 18),
-        HRFlowable(width="100%", thickness=0.7, color=colors.HexColor("#E5E7EB")),
-        Spacer(1, 6),
-        Paragraph(
-            f"Report ID: {esc(report_id)}<br/>"
-            f"Generated by: reporting-agent@{esc(prompt_version)}<br/>"
-            f"AI model: {esc(model_name)}<br/>"
-            f"Generated at: {datetime.now(timezone.utc).isoformat()}",
-            meta,
-        ),
-    ]
-
-    doc.build(story)
-    return buf.getvalue()
 
 
 def _fixture_gemini_data(stats: dict) -> dict:
@@ -409,7 +272,17 @@ def generate_report(
     # browser. pdf_ref stays empty and the caller falls back to HTML.
     pdf_ref = ""
     try:
-        pdf_bytes = _render_pdf(**render_kwargs)
+        pdf_bytes = render_report_pdf(
+            report_id=report_id,
+            tenant=_tenant_profile(db, tenant_id),
+            period_start=period_start,
+            period_end=period_end,
+            stats=stats,
+            gemini_data=gemini_data,
+            used_fixture=used_fixture,
+            model_name=model_name,
+            prompt_version=prompt_version,
+        )
         pdf_path = f"{tenant_id}/{report_id}/report.pdf"
         bucket.blob(pdf_path).upload_from_string(pdf_bytes, content_type="application/pdf")
         pdf_ref = f"gs://{bucket_name}/{pdf_path}"
