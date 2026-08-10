@@ -16,6 +16,7 @@ import {
   ShieldAlert,
   ScrollText,
   Gauge,
+  LifeBuoy,
   BookMarked,
   Settings as SettingsIcon,
   Search,
@@ -36,6 +37,7 @@ import {
   AuditSection,
   SecuritySection,
   SystemSection,
+  SupportSection,
   SettingsSection,
 } from "./sections";
 
@@ -52,6 +54,7 @@ const NAV = [
   { to: "/audit", label: "Audit log", icon: ScrollText },
   { to: "/security", label: "Security", icon: ShieldAlert },
   { to: "/system", label: "System", icon: Gauge },
+  { to: "/support", label: "Support", icon: LifeBuoy },
   { to: "/settings", label: "Settings", icon: SettingsIcon },
 ];
 
@@ -305,6 +308,7 @@ function Shell() {
           <Route path="/audit" element={<AuditSection />} />
           <Route path="/security" element={<SecuritySection />} />
           <Route path="/system" element={<SystemSection />} />
+          <Route path="/support" element={<SupportSection />} />
           <Route path="/settings" element={<SettingsSection />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

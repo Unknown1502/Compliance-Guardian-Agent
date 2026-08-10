@@ -76,6 +76,7 @@ from schema_validators import (
 from api_gateway.admin_routes import build_admin_router
 from api_gateway.composition import RULESETS_ROOT, Gateway
 from api_gateway.payment_routes import build_payment_router
+from api_gateway.support_routes import build_support_router
 from api_gateway.rate_limit import (
     BackoffRateLimiter,
     TokenBucketRateLimiter,
@@ -204,6 +205,18 @@ app.include_router(
     build_payment_router(
         gw,
         enforce_expensive=lambda key, what: _enforce(_expensive_limiter, key, what),
+        enforce_standard=lambda key, what: _enforce(_standard_limiter, key, what),
+    ),
+    prefix="/api",
+)
+
+# Support tickets. Customer routes under /api/support/*, operator routes under
+# /api/platform/support/*, in one module because the boundary between them —
+# internal notes never reaching a customer — is the thing worth keeping in one
+# auditable place.
+app.include_router(
+    build_support_router(
+        gw,
         enforce_standard=lambda key, what: _enforce(_standard_limiter, key, what),
     ),
     prefix="/api",

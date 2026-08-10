@@ -16,6 +16,8 @@ import {
   type AuditEvent,
   type ComplianceIntel,
   type PlatformRuleset,
+  type SupportTicketRow,
+  type SupportPermissions,
   ApiError,
 } from "./api";
 import { useAuth } from "./auth";
@@ -1240,6 +1242,313 @@ export function RulesetsSection() {
         Every count on this page is computed from the same files the engine loads, so it cannot
         report a rule that will not actually be applied.
       </p>
+    </div>
+  );
+}
+
+// -------------------------------------------------------------- Support
+
+const TICKET_STATUSES = ["new", "open", "in_progress", "waiting_for_user", "resolved", "closed"];
+const TICKET_PRIORITIES = ["low", "normal", "high", "urgent"];
+
+/**
+ * Support inbox.
+ *
+ * The one place in this console that shows internal notes, and the reason
+ * they are visually distinct from customer messages: an operator glancing at
+ * a thread must never mistake a triage note for something the customer has
+ * already read. Customers cannot receive them at all — they are filtered
+ * server-side — so this styling is about operator comprehension, not secrecy.
+ *
+ * Replying is gated on a separate permission from reading. An operator who
+ * can read the inbox is not automatically allowed to speak to customers in
+ * the company's name, so the composer is hidden rather than shown-and-failing.
+ */
+export function SupportSection() {
+  const { getToken } = useAuth();
+  const { data, error, loading, reload } = useData<SupportTicketRow[]>(api.support);
+  const perms = useData<SupportPermissions>(api.supportPermissions);
+
+  const [selected, setSelected] = useState<string | null>(null);
+  const [q, setQ] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [reply, setReply] = useState("");
+  const [internal, setInternal] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const tickets = data ?? [];
+  const active = tickets.find((t) => t.ticket_id === selected) ?? tickets[0];
+  const canReply = perms.data?.can_reply === true;
+
+  const rows = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    return tickets.filter((t) => {
+      if (statusFilter && t.status !== statusFilter) return false;
+      if (!needle) return true;
+      return [t.reference, t.email, t.first_name, t.tenant_id, t.category]
+        .concat(t.messages.map((m) => m.body))
+        .some((v) => String(v).toLowerCase().includes(needle));
+    });
+  }, [tickets, q, statusFilter]);
+
+  const counts = useMemo(() => {
+    const open = tickets.filter((t) => !["resolved", "closed"].includes(t.status)).length;
+    const waiting = tickets.filter((t) => t.status === "waiting_for_user").length;
+    const urgent = tickets.filter((t) => ["high", "urgent"].includes(t.priority)).length;
+    const unassigned = tickets.filter((t) => !t.assigned_to && !["resolved", "closed"].includes(t.status)).length;
+    return { open, waiting, urgent, unassigned };
+  }, [tickets]);
+
+  const send = async () => {
+    if (!active || !reply.trim()) return;
+    setBusy(true);
+    setActionError(null);
+    try {
+      await api.supportReply(getToken, active.ticket_id, reply.trim(), internal);
+      setReply("");
+      setInternal(false);
+      reload();
+    } catch (e) {
+      setActionError(e instanceof ApiError ? e.message : (e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const patch = async (p: { status?: string; priority?: string; assigned_to?: string }) => {
+    if (!active) return;
+    setActionError(null);
+    try {
+      await api.supportUpdate(getToken, active.ticket_id, p);
+      reload();
+    } catch (e) {
+      setActionError(e instanceof ApiError ? e.message : (e as Error).message);
+    }
+  };
+
+  if (loading) return <Loading />;
+  if (error) return <ErrorNote error={error} />;
+
+  const field =
+    "rounded border border-line bg-panel px-2 py-1 text-sm text-fg focus:border-accent focus:outline-none";
+
+  return (
+    <div>
+      <Head title="Support inbox" sub="Customer requests across every workspace" />
+
+      <div className="grid grid-cols-2 overflow-hidden rounded-xl border border-line bg-panel shadow-soft md:grid-cols-4">
+        <Metric label="Open" value={counts.open} tone={counts.open ? "warn" : "ok"} />
+        <Metric label="Awaiting customer" value={counts.waiting} />
+        <Metric label="High / urgent" value={counts.urgent} tone={counts.urgent ? "crit" : "neutral"} />
+        <Metric label="Unassigned" value={counts.unassigned} tone={counts.unassigned ? "warn" : "ok"} />
+      </div>
+
+      {perms.data && !perms.data.agents_configured && (
+        <Panel className="mt-3" title="Replying is disabled">
+          <p className="px-3 py-3 text-sm text-muted">
+            No support agents are configured, so nobody can reply to a customer. Set
+            CG_SUPPORT_AGENTS to a comma-separated list of operator emails. Closed by default is
+            deliberate — being able to read this inbox is not the same as being able to write to
+            customers as the company.
+          </p>
+        </Panel>
+      )}
+
+      {tickets.length === 0 ? (
+        <Panel className="mt-3">
+          <Empty>
+            No support requests yet. They arrive here when a customer uses the contact form.
+          </Empty>
+        </Panel>
+      ) : (
+        <div className="mt-3 grid gap-3 lg:grid-cols-[380px_minmax(0,1fr)]">
+          <Panel
+            title={`Tickets \u00b7 ${rows.length}`}
+            right={
+              <div className="flex items-center gap-2">
+                <select className={field} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+                  <option value="">All statuses</option>
+                  {TICKET_STATUSES.map((s) => (
+                    <option key={s} value={s}>
+                      {s.replace(/_/g, " ")}
+                    </option>
+                  ))}
+                </select>
+                <Filter value={q} onChange={setQ} placeholder="Search..." />
+              </div>
+            }
+          >
+            <div className="max-h-[70vh] overflow-auto">
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th>Ticket</th>
+                    <th>Status</th>
+                    <th>Age</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((t) => (
+                    <tr
+                      key={t.ticket_id}
+                      onClick={() => setSelected(t.ticket_id)}
+                      className={cn("cursor-pointer", active?.ticket_id === t.ticket_id && "bg-raised")}
+                    >
+                      <td>
+                        <Mono>{t.reference}</Mono>
+                        <div className="text-2xs text-faint">
+                          {t.first_name} \u00b7 {t.category}
+                          {["high", "urgent"].includes(t.priority) && (
+                            <span className="ml-1.5 text-crit">{t.priority}</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="whitespace-nowrap text-fg-dim">{t.status.replace(/_/g, " ")}</td>
+                      <td className="whitespace-nowrap text-faint">{ago(t.created_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
+
+          {active && (
+            <div className="min-w-0">
+              <Panel
+                title={active.reference}
+                right={
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      className={field}
+                      value={active.status}
+                      onChange={(e) => patch({ status: e.target.value })}
+                    >
+                      {TICKET_STATUSES.map((s) => (
+                        <option key={s} value={s}>
+                          {s.replace(/_/g, " ")}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      className={field}
+                      value={active.priority}
+                      onChange={(e) => patch({ priority: e.target.value })}
+                    >
+                      {TICKET_PRIORITIES.map((p) => (
+                        <option key={p} value={p}>
+                          {p}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                }
+              >
+                <div className="grid gap-x-6 gap-y-1 border-b border-line px-3 py-2.5 text-sm sm:grid-cols-2">
+                  <div>
+                    <span className="text-muted">From </span>
+                    <span className="text-fg">{active.first_name}</span>{" "}
+                    <Mono dim>{active.email}</Mono>
+                  </div>
+                  <div>
+                    <span className="text-muted">Workspace </span>
+                    <Link to={`/tenants/${active.tenant_id}`} className="text-accent hover:underline">
+                      <Mono>{active.tenant_id}</Mono>
+                    </Link>
+                  </div>
+                  {active.phone && (
+                    <div>
+                      <span className="text-muted">Phone </span>
+                      <Mono dim>{active.phone}</Mono>
+                    </div>
+                  )}
+                  <div>
+                    <span className="text-muted">Assigned </span>
+                    {active.assigned_to ? (
+                      <span className="text-fg">{active.assigned_to}</span>
+                    ) : (
+                      <button
+                        onClick={() => patch({ assigned_to: perms.data?.me ?? "" })}
+                        className="text-accent hover:underline"
+                      >
+                        assign to me
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="max-h-[46vh] space-y-2 overflow-auto px-3 py-3">
+                  {active.messages.map((m) => (
+                    <div
+                      key={m.message_id}
+                      className={cn(
+                        "rounded-lg border p-2.5",
+                        m.internal
+                          ? "border-warn/40 bg-warn/5"
+                          : m.sender === "support"
+                            ? "border-accent/30 bg-accent/5"
+                            : "border-line bg-raised",
+                      )}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-2xs font-semibold uppercase tracking-wide">
+                          {m.internal ? (
+                            <span className="text-warn">Internal note \u00b7 not visible to customer</span>
+                          ) : m.sender === "support" ? (
+                            <span className="text-accent">Support \u00b7 {m.author_email}</span>
+                          ) : (
+                            <span className="text-fg-dim">Customer</span>
+                          )}
+                        </span>
+                        <span className="text-2xs text-faint">{ago(m.created_at)}</span>
+                      </div>
+                      <p className="mt-1 whitespace-pre-wrap text-sm text-fg-dim">{m.body}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {canReply ? (
+                  <div className="border-t border-line px-3 py-3">
+                    <textarea
+                      rows={3}
+                      value={reply}
+                      onChange={(e) => setReply(e.target.value)}
+                      placeholder={internal ? "Internal note, never sent to the customer..." : "Reply to the customer..."}
+                      className="w-full rounded-lg border border-line bg-panel px-2.5 py-2 text-sm text-fg placeholder:text-faint focus:border-accent focus:outline-none"
+                    />
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                      <label className="flex items-center gap-1.5 text-sm text-fg-dim">
+                        <input
+                          type="checkbox"
+                          checked={internal}
+                          onChange={(e) => setInternal(e.target.checked)}
+                        />
+                        Internal note
+                      </label>
+                      <button
+                        onClick={send}
+                        disabled={busy || !reply.trim()}
+                        className={cn(
+                          "rounded-lg px-3 py-1.5 text-sm font-medium text-white shadow-soft transition-colors disabled:opacity-40",
+                          internal ? "bg-warn hover:opacity-90" : "bg-accent hover:bg-accent-dim",
+                        )}
+                      >
+                        {busy ? "Sending..." : internal ? "Add note" : "Send reply"}
+                      </button>
+                    </div>
+                    {actionError && <p className="mt-2 text-sm text-crit">{actionError}</p>}
+                  </div>
+                ) : (
+                  <p className="border-t border-line px-3 py-3 text-sm text-muted">
+                    You can read this inbox but not reply. Replying requires the support agent
+                    permission.
+                  </p>
+                )}
+              </Panel>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

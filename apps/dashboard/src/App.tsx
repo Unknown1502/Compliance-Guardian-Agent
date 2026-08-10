@@ -44,6 +44,7 @@ const WorkspaceAdmin = lazy(() =>
 const RulesetsView = lazy(() => import("./views/RulesetsView").then((m) => ({ default: m.RulesetsView })));
 const BillingView = lazy(() => import("./views/BillingView").then((m) => ({ default: m.BillingView })));
 const TeamView = lazy(() => import("./views/TeamView").then((m) => ({ default: m.TeamView })));
+const SupportView = lazy(() => import("./views/SupportView").then((m) => ({ default: m.SupportView })));
 const SettingsView = lazy(() => import("./views/SettingsView").then((m) => ({ default: m.SettingsView })));
 
 function SplashScreen() {
@@ -113,6 +114,7 @@ function Gate() {
           <Route path="rulesets" element={<RulesetsView />} />
           <Route path="billing" element={<BillingView />} />
           <Route path="team" element={<TeamView />} />
+          <Route path="support" element={<SupportView />} />
           <Route path="settings" element={<SettingsView />} />
         </Route>
         {legalRoutes}

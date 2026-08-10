@@ -63,6 +63,25 @@ async function put<T>(getToken: TokenFn, path: string, body: unknown): Promise<T
   return res.json() as Promise<T>;
 }
 
+async function post<T>(getToken: TokenFn, path: string, body: unknown): Promise<T> {
+  const token = await getToken();
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      detail = (await res.json()).detail ?? detail;
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new ApiError(res.status, detail);
+  }
+  return res.json() as Promise<T>;
+}
+
 // -- shapes ----------------------------------------------------------------
 
 export interface WhoAmI {
@@ -191,6 +210,39 @@ export interface PlatformRuleset {
   rules: PlatformRule[];
 }
 
+export interface SupportMessageRow {
+  message_id: string;
+  sender: "customer" | "support";
+  author_email: string;
+  body: string;
+  /** Operator-only. Never returned on any customer-facing route. */
+  internal: boolean;
+  created_at: string;
+}
+
+export interface SupportTicketRow {
+  reference: string;
+  ticket_id: string;
+  tenant_id: string;
+  first_name: string;
+  email: string;
+  phone: string;
+  category: string;
+  subject: string;
+  status: string;
+  priority: string;
+  assigned_to: string;
+  created_at: string;
+  updated_at: string;
+  messages: SupportMessageRow[];
+}
+
+export interface SupportPermissions {
+  can_reply: boolean;
+  agents_configured: boolean;
+  me: string;
+}
+
 export interface ComplianceIntel {
   risk_distribution: { low: number; medium: number; high: number };
   top_rules: { rule_id: string; hits: number }[];
@@ -225,6 +277,17 @@ export const api = {
   rulesets: (t: TokenFn) => get<PlatformRuleset[]>(t, "/api/platform/rulesets"),
   setTenantStatus: (t: TokenFn, tenantId: string, status: "active" | "suspended", reason: string) =>
     put<TenantStatusResult>(t, `/api/platform/tenants/${tenantId}/status`, { status, reason }),
+  support: (t: TokenFn, limit = 200) =>
+    get<SupportTicketRow[]>(t, `/api/platform/support?limit=${limit}`),
+  supportPermissions: (t: TokenFn) =>
+    get<SupportPermissions>(t, "/api/platform/support/permissions"),
+  supportReply: (t: TokenFn, ticketId: string, body: string, internal: boolean) =>
+    post<SupportTicketRow>(t, `/api/platform/support/${ticketId}/reply`, { body, internal }),
+  supportUpdate: (
+    t: TokenFn,
+    ticketId: string,
+    patch: { status?: string; priority?: string; assigned_to?: string },
+  ) => put<SupportTicketRow>(t, `/api/platform/support/${ticketId}`, { assigned_to: "", ...patch }),
   audit: (t: TokenFn, limit = 200) =>
     get<{ count: number; events: AuditEvent[] }>(t, `/api/platform/audit?limit=${limit}`),
 };

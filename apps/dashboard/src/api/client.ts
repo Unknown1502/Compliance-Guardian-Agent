@@ -205,6 +205,78 @@ export interface Entitlement {
  * server when a check is triggered, so a client that lies about this gains
  * nothing — it just gets a 402 a moment later.
  */
+/* --- Support ------------------------------------------------------------- */
+
+export interface SupportMessageRow {
+  message_id: string;
+  sender: "customer" | "support";
+  author_email: string;
+  body: string;
+  internal: boolean;
+  created_at: string;
+}
+
+export interface SupportTicketRow {
+  reference: string;
+  ticket_id: string;
+  tenant_id: string;
+  first_name: string;
+  email: string;
+  phone: string;
+  category: string;
+  subject: string;
+  status: string;
+  priority: string;
+  assigned_to: string;
+  created_at: string;
+  updated_at: string;
+  messages: SupportMessageRow[];
+}
+
+/**
+ * File a support request.
+ *
+ * The workspace is taken from the session server-side, so nothing here can
+ * file a ticket against someone else. Internal operator notes are stripped
+ * before the response is built — the client never receives them and so cannot
+ * leak them by accident.
+ */
+export async function createTicket(
+  session: Session,
+  body: {
+    first_name: string;
+    email: string;
+    phone?: string;
+    message: string;
+    category?: string;
+    subject?: string;
+  },
+): Promise<SupportTicketRow> {
+  const res = await authedFetch(session, "/api/support/tickets", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return jsonOrThrow(res);
+}
+
+export async function listTickets(session: Session): Promise<SupportTicketRow[]> {
+  return jsonOrThrow(await authedFetch(session, "/api/support/tickets"));
+}
+
+export async function replyToTicket(
+  session: Session,
+  ticketId: string,
+  body: string,
+): Promise<SupportTicketRow> {
+  const res = await authedFetch(session, `/api/support/tickets/${ticketId}/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ body }),
+  });
+  return jsonOrThrow(res);
+}
+
 export async function getEntitlement(session: Session): Promise<Entitlement> {
   return jsonOrThrow(await authedFetch(session, "/api/entitlement"));
 }

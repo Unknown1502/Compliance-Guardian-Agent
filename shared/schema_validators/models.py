@@ -315,6 +315,109 @@ class RemediationPlan(StrictModel):
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Support
+#
+# New collections rather than fields on Tenant, deliberately: Tenant is a
+# StrictModel parsed by every service, so extending it forces all five to be
+# redeployed together. Support tickets are only ever touched by the gateway.
+# ---------------------------------------------------------------------------
+
+
+class TicketStatus(str, Enum):
+    NEW = "new"
+    OPEN = "open"
+    IN_PROGRESS = "in_progress"
+    WAITING_FOR_USER = "waiting_for_user"
+    RESOLVED = "resolved"
+    CLOSED = "closed"
+
+
+class TicketPriority(str, Enum):
+    LOW = "low"
+    NORMAL = "normal"
+    HIGH = "high"
+    URGENT = "urgent"
+
+
+class TicketCategory(str, Enum):
+    ACCOUNT = "account"
+    REPORT = "report"
+    BILLING = "billing"
+    SUBSCRIPTION = "subscription"
+    REFUND = "refund"
+    TECHNICAL = "technical"
+    SECURITY = "security"
+    PRIVACY = "privacy"
+    OTHER = "other"
+
+
+class MessageSender(str, Enum):
+    CUSTOMER = "customer"
+    SUPPORT = "support"
+
+
+class SupportMessage(StrictModel):
+    """One turn in a ticket conversation.
+
+    `internal` marks an operator-only note. It lives on the same thread so the
+    context stays with the ticket, and is filtered out server-side before any
+    customer-facing response is built — never by the client, which would be one
+    forgotten condition away from leaking triage notes to the customer they are
+    about.
+    """
+
+    message_id: str = Field(min_length=1)
+    sender: MessageSender
+    # Empty for a customer message: the ticket already carries their identity,
+    # and support replies are attributed to the operator who wrote them.
+    author_email: str = Field(default="", max_length=320)
+    body: str = Field(min_length=1, max_length=8000)
+    internal: bool = False
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class SupportTicket(StrictModel):
+    """A customer support request.
+
+    Tenant-scoped like everything else: tenant_id comes from the verified
+    session, never from the request body, so a ticket cannot be filed against
+    somebody else's workspace.
+    """
+
+    ticket_id: str = Field(min_length=1)          # internal id
+    reference: str = Field(min_length=1)          # CG-SUP-000123, shown to people
+    tenant_id: str = Field(min_length=1)
+    created_by_uid: str = Field(min_length=1)
+
+    first_name: str = Field(min_length=1, max_length=120)
+    email: str = Field(min_length=3, max_length=320)
+    phone: str = Field(default="", max_length=40)  # optional by design
+
+    category: TicketCategory = TicketCategory.OTHER
+    subject: str = Field(default="", max_length=200)
+    status: TicketStatus = TicketStatus.NEW
+    priority: TicketPriority = TicketPriority.NORMAL
+
+    # Operator email rather than uid: the console shows people, and an email is
+    # legible in the audit trail years later where a uid is not.
+    assigned_to: str = Field(default="", max_length=320)
+
+    messages: list[SupportMessage] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+    def customer_view(self) -> "SupportTicket":
+        """A copy with internal notes removed.
+
+        Used for every customer-facing response. Filtering here rather than at
+        each call site means a new endpoint cannot forget to do it.
+        """
+        return self.model_copy(
+            update={"messages": [m for m in self.messages if not m.internal]}
+        )
+
+
 class AuditLogRow(StrictModel):
     event_id: str = Field(min_length=1)
     tenant_id: str = Field(min_length=1)

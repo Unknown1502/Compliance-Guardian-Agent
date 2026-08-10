@@ -17,6 +17,7 @@ import {
   ShieldCheck,
   ChevronDown,
   TrendingUp,
+  LifeBuoy,
   PanelLeftClose,
   PanelLeftOpen,
 } from "lucide-react";
@@ -49,6 +50,7 @@ const GROUPS = [
       { to: "/rulesets", label: "Rulesets", icon: BookMarked },
       { to: "/team", label: "Team", icon: Users },
       { to: "/billing", label: "Billing", icon: CreditCard },
+      { to: "/support", label: "Support", icon: LifeBuoy },
       { to: "/settings", label: "Settings", icon: Settings },
     ],
   },

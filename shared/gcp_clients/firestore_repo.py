@@ -18,6 +18,8 @@ from google.cloud import firestore
 
 from schema_validators import (
     EntitlementSource,
+    SupportMessage,
+    SupportTicket,
     ApiKeyRecord,
     CheckDecision,
     ComplianceCheck,
@@ -43,6 +45,8 @@ COLLECTION_TASKS = "tasks"
 COLLECTION_REMEDIATION = "remediation_plans"
 COLLECTION_USERS = "users"
 COLLECTION_API_KEYS = "api_keys"
+COLLECTION_TICKETS = "support_tickets"
+COLLECTION_COUNTERS = "counters"
 
 
 class TenantMismatchError(PermissionError):
@@ -174,6 +178,93 @@ class FirestoreRepo:
                 tenant.entitlement_expires_at = utcnow() + timedelta(days=30)
             transaction.set(ref, tenant.model_dump(mode="json"))
             return tenant
+
+        return _txn(db.transaction())
+
+    # -- support ----------------------------------------------------------
+
+    def next_ticket_reference(self) -> str:
+        """Allocate a human-readable ticket reference, atomically.
+
+        A count of existing tickets would collide the moment two arrive at
+        once, and a random id is unusable over the phone. A transactional
+        counter gives both: monotonic, readable, and safe under concurrency.
+        """
+        db = self._db
+        ref = db.collection(COLLECTION_COUNTERS).document("support_tickets")
+
+        @firestore.transactional
+        def _txn(transaction) -> int:
+            snap = ref.get(transaction=transaction)
+            n = (snap.to_dict() or {}).get("value", 0) + 1 if snap.exists else 1
+            transaction.set(ref, {"value": n})
+            return n
+
+        return f"CG-SUP-{_txn(db.transaction()):06d}"
+
+    def upsert_ticket(self, ticket: SupportTicket) -> None:
+        self._db.collection(COLLECTION_TICKETS).document(ticket.ticket_id).set(
+            ticket.model_dump(mode="json")
+        )
+
+    def get_ticket(self, ticket_id: str, tenant_id: str | None = None) -> SupportTicket:
+        """Fetch one ticket.
+
+        tenant_id is required on the customer path and omitted on the operator
+        path. When present it is enforced here rather than by the caller, so a
+        customer cannot read another workspace's ticket by guessing an id.
+        """
+        snap = self._db.collection(COLLECTION_TICKETS).document(ticket_id).get()
+        if not snap.exists:
+            raise NotFoundError(f"ticket {ticket_id} not found")
+        ticket = SupportTicket.model_validate(snap.to_dict())
+        if tenant_id is not None and ticket.tenant_id != tenant_id:
+            # Same error as a missing ticket: distinguishing them would confirm
+            # that somebody else's ticket exists.
+            raise NotFoundError(f"ticket {ticket_id} not found")
+        return ticket
+
+    def list_tickets(self, tenant_id: str, limit: int = 100) -> list[SupportTicket]:
+        q = (
+            self._db.collection(COLLECTION_TICKETS)
+            .where(filter=firestore.FieldFilter("tenant_id", "==", tenant_id))
+            .limit(limit)
+        )
+        out = [SupportTicket.model_validate(d.to_dict()) for d in q.stream()]
+        out.sort(key=lambda t: t.updated_at, reverse=True)
+        return out
+
+    def list_all_tickets(self, limit: int = 300) -> list[SupportTicket]:
+        """Every ticket, for the operator console. Cross-tenant by design."""
+        q = self._db.collection(COLLECTION_TICKETS).limit(limit)
+        out = [SupportTicket.model_validate(d.to_dict()) for d in q.stream()]
+        out.sort(key=lambda t: t.updated_at, reverse=True)
+        return out
+
+    def append_ticket_message(
+        self, ticket_id: str, message: SupportMessage, *, status: str | None = None
+    ) -> SupportTicket:
+        """Append a message, transactionally.
+
+        A read-modify-write outside a transaction loses a message when a
+        customer and an operator reply at the same moment — the second write
+        overwrites a thread that no longer matches what it read.
+        """
+        db = self._db
+        ref = db.collection(COLLECTION_TICKETS).document(ticket_id)
+
+        @firestore.transactional
+        def _txn(transaction) -> SupportTicket:
+            snap = ref.get(transaction=transaction)
+            if not snap.exists:
+                raise NotFoundError(f"ticket {ticket_id} not found")
+            ticket = SupportTicket.model_validate(snap.to_dict())
+            ticket.messages.append(message)
+            ticket.updated_at = utcnow()
+            if status:
+                ticket.status = status
+            transaction.set(ref, ticket.model_dump(mode="json"))
+            return ticket
 
         return _txn(db.transaction())
 
