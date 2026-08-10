@@ -51,6 +51,20 @@ class TenantStatus(str, Enum):
     SUSPENDED = "suspended"
 
 
+class EntitlementSource(str, Enum):
+    """Where a workspace's current report allowance came from.
+
+    Kept distinct from PlanTier because they answer different questions.
+    plan_tier is what the customer bought; this is what they can currently
+    DO. A one-time buyer is not a subscriber, and the console must never
+    describe them as one.
+    """
+
+    FREE = "free"           # the one report every new workspace gets
+    SINGLE = "single"       # one-time purchase, one report
+    PRO = "pro"             # monthly subscription allowance
+
+
 class Tenant(StrictModel):
     tenant_id: str = Field(min_length=1)
     name: str = Field(min_length=1)
@@ -69,6 +83,23 @@ class Tenant(StrictModel):
     # destructive, so it never happens unless a tenant explicitly opts in.
     # The append-only audit trail is NEVER affected by this setting.
     retention_days: int = Field(default=0, ge=0, le=3650)
+
+    # --- Report entitlement --------------------------------------------
+    # Deliberately counters rather than a boolean. "free_report_used" cannot
+    # express a Pro allowance, a top-up, or a refund, and every one of those
+    # is a real case. Remaining = granted - consumed, and consumption is
+    # applied inside a Firestore transaction so two concurrent requests
+    # cannot both spend the last one.
+    #
+    # Defaults to 1 granted / 0 consumed, so a workspace created before this
+    # existed reads back with its free report intact rather than locked out.
+    reports_granted: int = Field(default=1, ge=0)
+    reports_consumed: int = Field(default=0, ge=0)
+    entitlement_source: EntitlementSource = EntitlementSource.FREE
+    # Set only for a Pro subscription: when the current allowance lapses and
+    # the next period's grant is due. None for free and one-time purchases,
+    # which never expire.
+    entitlement_expires_at: datetime | None = None
 
     # Defaults to ACTIVE so every workspace written before this field existed
     # reads back as active rather than needing a migration.

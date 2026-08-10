@@ -67,6 +67,31 @@ class FakeRepo:
     def upsert_document(self, document: Document) -> None:
         self._documents[document.document_id] = document
 
+    def upsert_tenant(self, tenant: Tenant) -> None:
+        self._tenants[tenant.tenant_id] = tenant
+
+    # Report generation now spends an entitlement, so any fake standing in for
+    # the repo has to model it — otherwise a flow test fails on the accounting
+    # rather than on the behaviour it is actually asserting.
+    def consume_report_entitlement(self, tenant_id: str) -> Tenant:
+        from gcp_clients.firestore_repo import EntitlementExhaustedError
+
+        t = self._tenants[tenant_id]
+        if t.reports_consumed >= t.reports_granted:
+            raise EntitlementExhaustedError(tenant_id)
+        t.reports_consumed += 1
+        return t
+
+    def release_report_entitlement(self, tenant_id: str) -> None:
+        t = self._tenants[tenant_id]
+        t.reports_consumed = max(0, t.reports_consumed - 1)
+
+    def grant_report_entitlement(self, tenant_id: str, *, source, quantity: int) -> Tenant:
+        t = self._tenants[tenant_id]
+        t.reports_granted += quantity
+        t.entitlement_source = source
+        return t
+
     def update_document_fields(self, document_id, tenant_id, updates) -> Document:
         doc = self.get_document(document_id, tenant_id)
         patched = doc.model_copy(update=updates)

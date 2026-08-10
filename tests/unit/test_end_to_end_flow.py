@@ -140,6 +140,29 @@ class FakeRepo:
     def upsert_user(self, user):
         self.users[user.uid] = user
 
+    # Entitlements. The journey this file walks is signup -> upload -> check,
+    # and a check now spends the workspace's free report — so the fake models
+    # that, and the flow proves the free report actually carries a new user
+    # through their first analysis end to end.
+    def consume_report_entitlement(self, tenant_id):
+        from gcp_clients.firestore_repo import EntitlementExhaustedError
+
+        t = self.get_tenant(tenant_id)
+        if t.reports_consumed >= t.reports_granted:
+            raise EntitlementExhaustedError(tenant_id)
+        t.reports_consumed += 1
+        return t
+
+    def release_report_entitlement(self, tenant_id):
+        t = self.get_tenant(tenant_id)
+        t.reports_consumed = max(0, t.reports_consumed - 1)
+
+    def grant_report_entitlement(self, tenant_id, *, source, quantity):
+        t = self.get_tenant(tenant_id)
+        t.reports_granted += quantity
+        t.entitlement_source = source
+        return t
+
     def list_users(self, tenant_id, limit=100):
         return [u for u in self.users.values() if u.tenant_id == tenant_id]
 

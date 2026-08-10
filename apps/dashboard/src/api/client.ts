@@ -186,6 +186,29 @@ export interface ProviderOption {
   currency: string | null;
 }
 
+export interface Entitlement {
+  /** free_report_available | paid_report_available | payment_required */
+  state: string;
+  /** free | single | pro — a one-time buyer is never described as Pro. */
+  source: string;
+  granted: number;
+  consumed: number;
+  remaining: number;
+  expires_at: string | null;
+  plan_tier: string;
+}
+
+/**
+ * The workspace's report allowance.
+ *
+ * Advisory only. The authoritative check runs inside a transaction on the
+ * server when a check is triggered, so a client that lies about this gains
+ * nothing — it just gets a 402 a moment later.
+ */
+export async function getEntitlement(session: Session): Promise<Entitlement> {
+  return jsonOrThrow(await authedFetch(session, "/api/entitlement"));
+}
+
 export async function getPaymentProviders(
   session: Session,
 ): Promise<{ oneoff: ProviderOption[]; subscription: ProviderOption[] }> {

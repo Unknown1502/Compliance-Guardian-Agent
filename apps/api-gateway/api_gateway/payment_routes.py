@@ -34,6 +34,7 @@ from typing import Callable
 from auth_middleware import AuthContext, require_auth
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
+from gcp_clients.firestore_repo import PRO_MONTHLY_REPORTS
 from schema_validators import PlanTier
 
 logger = logging.getLogger("cg.gateway.payments")
@@ -183,12 +184,33 @@ def build_payment_router(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED, detail="payment amount is short"
             )
 
+        from schema_validators import EntitlementSource
+
         g = gw()
         tenant = g.repo.get_tenant(payment.tenant_id)
         before = tenant.plan_tier
         tier = _tier_for(payment.plan)
         tenant.plan_tier = tier
         g.repo.upsert_tenant(tenant)
+
+        # Grant the allowance the customer just paid for. Additive and done
+        # in its own transaction, so a subscriber who still had an unused
+        # free report keeps it rather than having it quietly confiscated.
+        #
+        # Safe against duplicate webhooks for the same reason the audit entry
+        # is: dedup_key below is the provider's own payment reference, so a
+        # redelivered event collapses rather than granting twice. The grant
+        # itself is the one thing here that would be expensive to get wrong.
+        if payment.plan == "subscription":
+            g.repo.grant_report_entitlement(
+                payment.tenant_id,
+                source=EntitlementSource.PRO,
+                quantity=PRO_MONTHLY_REPORTS,
+            )
+        else:
+            g.repo.grant_report_entitlement(
+                payment.tenant_id, source=EntitlementSource.SINGLE, quantity=1
+            )
         g.auditor.log(
             tenant_id=payment.tenant_id,
             # Provider, not path — see confirmed_by above.

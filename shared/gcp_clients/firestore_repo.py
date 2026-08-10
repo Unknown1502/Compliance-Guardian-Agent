@@ -9,12 +9,15 @@ guessing even though IDs are server-generated).
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import os
+
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from google.cloud import firestore
 
 from schema_validators import (
+    EntitlementSource,
     ApiKeyRecord,
     CheckDecision,
     ComplianceCheck,
@@ -23,6 +26,15 @@ from schema_validators import (
     Tenant,
     TenantUser,
 )
+
+# A Pro subscription's monthly allowance. Config, not a magic number buried
+# in a transaction — raising the plan's value should be one edit here.
+PRO_MONTHLY_REPORTS = int(os.environ.get("CG_PRO_MONTHLY_REPORTS", "20"))
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
 
 COLLECTION_TENANTS = "tenants"
 COLLECTION_DOCUMENTS = "documents"
@@ -45,6 +57,16 @@ class DecisionConflictError(RuntimeError):
     """Raised when a reviewer decision loses a race (check already decided)."""
 
 
+
+class EntitlementExhaustedError(RuntimeError):
+    """Raised when a workspace has no report allowance left.
+
+    Distinct from an authorization error on purpose: the caller is perfectly
+    entitled to be here, they have simply used what they paid for. The
+    gateway turns this into 402 Payment Required rather than 403.
+    """
+
+
 class FirestoreRepo:
     def __init__(self, client: firestore.Client) -> None:
         self._db = client
@@ -56,6 +78,104 @@ class FirestoreRepo:
         if not snap.exists:
             raise NotFoundError(f"tenant {tenant_id} not found")
         return Tenant.model_validate(snap.to_dict())
+
+    def consume_report_entitlement(self, tenant_id: str) -> Tenant:
+        """Spend one report allowance, atomically.
+
+        The naive version — read remaining, decide, write later — loses under
+        concurrency: two requests both read "1 remaining", both decide yes,
+        and the workspace gets two reports for one payment. Firestore
+        transactions re-read inside the transaction and retry on contention,
+        so exactly one of those commits and the other sees zero remaining.
+
+        Also rolls a Pro subscription into its next period here rather than on
+        a schedule. There is no cron in this system, so an allowance that
+        renewed "monthly" via a background job would silently not renew at
+        all; doing it lazily on the request that needs it means the renewal
+        happens exactly when it matters and needs nothing else to be running.
+
+        Raises EntitlementExhaustedError when nothing is left. Never returns a
+        tenant with consumed > granted.
+        """
+        db = self._db
+        ref = db.collection(COLLECTION_TENANTS).document(tenant_id)
+
+        @firestore.transactional
+        def _txn(transaction) -> Tenant:
+            snap = ref.get(transaction=transaction)
+            if not snap.exists:
+                raise NotFoundError(f"tenant {tenant_id} not found")
+            tenant = Tenant.model_validate(snap.to_dict())
+
+            # Lazy Pro renewal: the period lapsed, so the next allowance is due.
+            if (
+                tenant.entitlement_source is EntitlementSource.PRO
+                and tenant.entitlement_expires_at is not None
+                and tenant.entitlement_expires_at <= utcnow()
+            ):
+                tenant.reports_granted = tenant.reports_consumed + PRO_MONTHLY_REPORTS
+                tenant.entitlement_expires_at = utcnow() + timedelta(days=30)
+
+            if tenant.reports_consumed >= tenant.reports_granted:
+                raise EntitlementExhaustedError(
+                    f"tenant {tenant_id} has no report allowance remaining"
+                )
+
+            tenant.reports_consumed += 1
+            transaction.set(ref, tenant.model_dump(mode="json"))
+            return tenant
+
+        return _txn(db.transaction())
+
+    def release_report_entitlement(self, tenant_id: str) -> None:
+        """Give back an allowance spent on a report that never got produced.
+
+        Called when generation fails after consumption. Clamped at zero so a
+        double release cannot manufacture free reports, which would be the
+        obvious way to abuse a refund path.
+        """
+        db = self._db
+        ref = db.collection(COLLECTION_TENANTS).document(tenant_id)
+
+        @firestore.transactional
+        def _txn(transaction) -> None:
+            snap = ref.get(transaction=transaction)
+            if not snap.exists:
+                return
+            tenant = Tenant.model_validate(snap.to_dict())
+            if tenant.reports_consumed <= 0:
+                return
+            tenant.reports_consumed -= 1
+            transaction.set(ref, tenant.model_dump(mode="json"))
+
+        _txn(db.transaction())
+
+    def grant_report_entitlement(
+        self, tenant_id: str, *, source: EntitlementSource, quantity: int
+    ) -> Tenant:
+        """Add allowance after a verified payment.
+
+        Additive rather than absolute: a customer who buys a single report
+        while still holding an unused free one keeps both. Setting the total
+        instead would quietly confiscate what they already had.
+        """
+        db = self._db
+        ref = db.collection(COLLECTION_TENANTS).document(tenant_id)
+
+        @firestore.transactional
+        def _txn(transaction) -> Tenant:
+            snap = ref.get(transaction=transaction)
+            if not snap.exists:
+                raise NotFoundError(f"tenant {tenant_id} not found")
+            tenant = Tenant.model_validate(snap.to_dict())
+            tenant.reports_granted += quantity
+            tenant.entitlement_source = source
+            if source is EntitlementSource.PRO:
+                tenant.entitlement_expires_at = utcnow() + timedelta(days=30)
+            transaction.set(ref, tenant.model_dump(mode="json"))
+            return tenant
+
+        return _txn(db.transaction())
 
     def upsert_tenant(self, tenant: Tenant) -> None:
         self._db.collection(COLLECTION_TENANTS).document(tenant.tenant_id).set(

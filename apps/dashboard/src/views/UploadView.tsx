@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
@@ -11,7 +11,13 @@ import {
   Circle,
   ShieldOff,
 } from "lucide-react";
-import { uploadDocument, triggerCheck, ApiError } from "../api/client";
+import {
+  uploadDocument,
+  triggerCheck,
+  getEntitlement,
+  ApiError,
+  type Entitlement,
+} from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useToast } from "../context/ToastContext";
 import { Card, CardHeader, PageHeading } from "../components/ui/Card";
@@ -42,6 +48,77 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/**
+ * Report allowance banner.
+ *
+ * Two jobs. When there is allowance left it says how much, so nobody is
+ * surprised by a paywall mid-flow. When there is none it becomes the upgrade
+ * wall and explains the two ways forward.
+ *
+ * It is deliberately NOT the enforcement. The server consumes the allowance
+ * inside a transaction when a check is triggered, so this component being
+ * wrong — or edited in devtools — changes nothing except what the user sees.
+ */
+function AllowanceBanner({ entitlement }: { entitlement: Entitlement | null }) {
+  if (!entitlement) return null;
+
+  if (entitlement.state !== "payment_required") {
+    const isFree = entitlement.source === "free";
+    return (
+      <div className="mb-5 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-line bg-surface-2 px-4 py-3 text-[13px] text-ink-2">
+        <span className="font-medium text-ink">
+          {entitlement.remaining} report{entitlement.remaining === 1 ? "" : "s"} remaining
+        </span>
+        <span className="text-muted">
+          {isFree
+            ? "· your free report — no card needed"
+            : entitlement.source === "pro"
+              ? "· Pro monthly allowance"
+              : "· single report purchase"}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mb-6 rounded-xl border border-line bg-surface p-6 shadow-soft">
+      <h2 className="text-[17px] font-bold text-ink">Your free report has been used.</h2>
+      <p className="mt-1.5 text-[13.5px] leading-relaxed text-ink-2">
+        You have completed your first ComplianceGuardian analysis. You can still upload
+        documents — they are stored against your workspace — but analysing another one needs a
+        paid allowance.
+      </p>
+
+      <div className="mt-5 grid gap-3 sm:grid-cols-2">
+        <div className="rounded-lg border border-line p-4">
+          <h3 className="text-[14px] font-semibold text-ink">Single report</h3>
+          <p className="mt-1 text-[12.5px] leading-relaxed text-ink-2">
+            One-time purchase. Unlocks one more analysis. No subscription, nothing to cancel.
+          </p>
+          <Link
+            to="/billing"
+            className="mt-3 inline-flex rounded-lg border border-line px-3 py-1.5 text-[13px] font-medium text-ink transition-colors hover:bg-surface-2"
+          >
+            Buy one report
+          </Link>
+        </div>
+        <div className="rounded-lg border border-brand-300 bg-brand-50/40 p-4">
+          <h3 className="text-[14px] font-semibold text-ink">Pro</h3>
+          <p className="mt-1 text-[12.5px] leading-relaxed text-ink-2">
+            Monthly. A recurring allowance of reports plus weekly summaries. Cancel any time.
+          </p>
+          <Link
+            to="/billing"
+            className="mt-3 inline-flex rounded-lg bg-brand-600 px-3 py-1.5 text-[13px] font-semibold text-white shadow-soft transition-colors hover:bg-brand-700"
+          >
+            Upgrade to Pro
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function UploadView() {
   const { session } = useAuth();
   const toast = useToast();
@@ -58,6 +135,19 @@ export function UploadView() {
 
   const busy = stage === "uploading" || stage === "dispatching";
 
+  // Advisory only — the server enforces this inside a transaction when the
+  // check is triggered. This exists so someone with no allowance finds out
+  // before choosing a file, not after uploading one.
+  const [entitlement, setEntitlement] = useState<Entitlement | null>(null);
+  const loadEntitlement = useCallback(() => {
+    if (!session) return;
+    getEntitlement(session)
+      .then(setEntitlement)
+      .catch(() => setEntitlement(null));
+  }, [session]);
+  useEffect(loadEntitlement, [loadEntitlement]);
+
+
   const handleUpload = async () => {
     if (!session || !file) return;
     setStage("uploading");
@@ -69,6 +159,7 @@ export function UploadView() {
       const task = await triggerCheck(session, up.document_id);
       append(`Compliance check dispatched for ${up.document_id} → task ${task.task_id} (${task.status})`);
       setStage("done");
+      loadEntitlement();
       toast.push({
         kind: "success",
         title: "Document submitted",
@@ -76,7 +167,15 @@ export function UploadView() {
       });
     } catch (err) {
       setStage("error");
-      if (err instanceof ApiError && err.status === 503) {
+      if (err instanceof ApiError && err.status === 402) {
+        // The document is stored; only the analysis is gated. Say so, because
+        // "payment required" after an upload otherwise reads as lost work.
+        loadEntitlement();
+        const msg =
+          "Your report allowance is used up. The document is saved — choose a plan to analyse it.";
+        setError(msg);
+        toast.push({ kind: "error", title: "Payment required", description: msg });
+      } else if (err instanceof ApiError && err.status === 503) {
         const msg =
           "Pipeline unavailable — the API gateway has no GEMINI_API_KEY configured. Set it and retry.";
         setError(msg);
@@ -107,6 +206,8 @@ export function UploadView() {
         title="Upload document"
         subtitle="PDF, text, CSV or image. Fields are extracted, then scored against your ruleset."
       />
+
+      <AllowanceBanner entitlement={entitlement} />
 
       <Card>
         <div

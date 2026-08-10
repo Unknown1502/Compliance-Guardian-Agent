@@ -62,6 +62,24 @@ class FakeRepo:
     def upsert_tenant(self, tenant: Tenant) -> None:
         self.tenants[tenant.tenant_id] = tenant
 
+    # A verified payment now also grants report allowance, so the fake has to
+    # model it or the payment path 500s here for a reason unrelated to
+    # payments.
+    def grant_report_entitlement(self, tenant_id: str, *, source, quantity: int):
+        t = self.tenants[tenant_id]
+        t.reports_granted += quantity
+        t.entitlement_source = source
+        return t
+
+    def consume_report_entitlement(self, tenant_id: str):
+        t = self.tenants[tenant_id]
+        t.reports_consumed += 1
+        return t
+
+    def release_report_entitlement(self, tenant_id: str) -> None:
+        t = self.tenants[tenant_id]
+        t.reports_consumed = max(0, t.reports_consumed - 1)
+
 
 class FakeAuditor:
     def __init__(self):

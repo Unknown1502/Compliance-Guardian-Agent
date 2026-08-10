@@ -53,6 +53,7 @@ from firebase_admin.auth import EmailAlreadyExistsError
 from gcp_clients import audit_dataset, audit_table, project_id
 from gcp_clients.firestore_repo import (
     DecisionConflictError,
+    EntitlementExhaustedError,
     NotFoundError,
     TenantMismatchError,
 )
@@ -855,9 +856,41 @@ def trigger_check(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="compliance pipeline is temporarily unavailable",
         ) from exc
-    task = svc.create_and_dispatch(
-        task_type=TaskType.CHECK, target_ref=req.document_id, tenant_id=auth.tenant_id
-    )
+    # Entitlement is spent HERE, not at upload. Storing a document costs us
+    # almost nothing; running the check costs a Gemini call and is the thing
+    # the customer is actually buying. Consuming at upload would also charge
+    # someone for a file they never analysed.
+    #
+    # Consumed BEFORE dispatch and released if dispatch fails, rather than
+    # after success: between the check and the write, a second concurrent
+    # request could otherwise slip through on the same last allowance. The
+    # transaction inside consume_report_entitlement is what makes that safe.
+    try:
+        g.repo.consume_report_entitlement(auth.tenant_id)
+    except EntitlementExhaustedError:
+        # 402, not 403. The caller is perfectly authorised — they have used
+        # what they paid for, and the fix is a purchase rather than a
+        # permission.
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=(
+                "Your report allowance is used up. Buy a single report or "
+                "subscribe to Pro to run another check."
+            ),
+        ) from None
+    except NotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from None
+
+    try:
+        task = svc.create_and_dispatch(
+            task_type=TaskType.CHECK, target_ref=req.document_id, tenant_id=auth.tenant_id
+        )
+    except Exception:
+        # Nothing was produced, so nothing should have been charged.
+        g.repo.release_report_entitlement(auth.tenant_id)
+        logger.exception("dispatch failed for tenant %s; entitlement released", auth.tenant_id)
+        raise
+
     return TaskResponse(
         task_id=task.task_id,
         tenant_id=task.tenant_id,
@@ -866,6 +899,59 @@ def trigger_check(
         status=task.status.value,
         result=task.result,
         error=task.error,
+    )
+
+
+class EntitlementResponse(BaseModel):
+    """What the billing and upload screens render from.
+
+    A machine-readable state rather than a bare number, so the client never
+    has to re-implement the rule for when a check is allowed. The server
+    decides; the UI displays.
+    """
+
+    state: str  # free_report_available | paid_report_available | payment_required
+    source: str  # free | single | pro
+    granted: int
+    consumed: int
+    remaining: int
+    expires_at: str | None
+    plan_tier: str
+
+
+@app.get("/api/entitlement", response_model=EntitlementResponse)
+def get_entitlement(auth: AuthContext = Depends(require_auth)) -> EntitlementResponse:
+    """The workspace's current report allowance.
+
+    Read-only and advisory. The authoritative check happens inside the
+    transaction in trigger_check — a client that ignores this endpoint gains
+    nothing, which is the point of enforcing server-side.
+    """
+    tenant = gw().repo.get_tenant(auth.tenant_id)
+    remaining = max(0, tenant.reports_granted - tenant.reports_consumed)
+    source = (
+        tenant.entitlement_source.value
+        if hasattr(tenant.entitlement_source, "value")
+        else str(tenant.entitlement_source)
+    )
+    if remaining <= 0:
+        state = "payment_required"
+    elif source == "free":
+        state = "free_report_available"
+    else:
+        state = "paid_report_available"
+    return EntitlementResponse(
+        state=state,
+        source=source,
+        granted=tenant.reports_granted,
+        consumed=tenant.reports_consumed,
+        remaining=remaining,
+        expires_at=(
+            tenant.entitlement_expires_at.isoformat()
+            if tenant.entitlement_expires_at
+            else None
+        ),
+        plan_tier=tenant.plan_tier.value,
     )
 
 
