@@ -82,6 +82,9 @@ export interface TenantStatusResult {
 export interface TenantRow {
   status: string;
   status_reason: string;
+  entitlement_source: string;
+  reports_granted: number;
+  reports_consumed: number;
   tenant_id: string;
   name: string;
   industry: string;

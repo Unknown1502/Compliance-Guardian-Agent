@@ -151,6 +151,12 @@ class PlatformTenantRow(BaseModel):
     # workspace keeps every document and verdict it ever produced.
     status: str = "active"
     status_reason: str = ""
+    # Entitlement, kept separate from plan_tier because they answer different
+    # questions: what was bought versus what can currently be done. A one-time
+    # buyer must never be displayed as a subscriber.
+    entitlement_source: str = "free"
+    reports_granted: int = 1
+    reports_consumed: int = 0
     members: int
     documents: int
     checks: int
@@ -555,6 +561,13 @@ def build_admin_router(gw) -> APIRouter:
                 PlatformTenantRow(
                     status=t.status.value if hasattr(t.status, "value") else str(t.status),
                     status_reason=t.status_reason,
+                    entitlement_source=(
+                        t.entitlement_source.value
+                        if hasattr(t.entitlement_source, "value")
+                        else str(t.entitlement_source)
+                    ),
+                    reports_granted=t.reports_granted,
+                    reports_consumed=t.reports_consumed,
                     tenant_id=t.tenant_id,
                     name=t.name,
                     industry=t.industry,

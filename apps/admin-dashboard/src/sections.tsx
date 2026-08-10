@@ -173,6 +173,42 @@ export function OverviewSection() {
 
 // ----------------------------------------------------------------- Tenants
 
+/**
+ * Plan + entitlement badge.
+ *
+ * The distinction this exists to preserve: a customer who bought ONE report
+ * is not a subscriber. Both have paid, both currently have allowance, and
+ * conflating them would misreport revenue and mislead anyone reading the
+ * console. plan_tier says what was bought; entitlement_source says what is
+ * currently in force.
+ */
+function PlanBadge({ row }: { row: Overview["tenants"][number] }) {
+  const src = row.entitlement_source;
+  if (src === "pro") {
+    return <span className="text-accent">PRO · monthly</span>;
+  }
+  if (src === "single") {
+    return (
+      <span>
+        <span className="text-fg-dim">FREE</span>
+        <span className="ml-1.5 border border-line px-1 py-0.5 text-2xs text-ok">SINGLE</span>
+      </span>
+    );
+  }
+  return <span className="text-muted">FREE</span>;
+}
+
+/** Reports used against granted, and whether anything is left. */
+function ReportsCell({ row }: { row: Overview["tenants"][number] }) {
+  const remaining = row.reports_granted - row.reports_consumed;
+  return (
+    <span className={cn("num", remaining <= 0 && "text-warn")}>
+      {row.reports_consumed}/{row.reports_granted}
+      {remaining <= 0 && <span className="ml-1.5 text-2xs">exhausted</span>}
+    </span>
+  );
+}
+
 export function TenantsSection() {
   const { getToken } = useAuth();
   const { data, error, loading, reload } = useData<Overview>(api.overview);
@@ -245,6 +281,7 @@ export function TenantsSection() {
                     ["industry", "Industry"],
                     ["jurisdiction", "Juris."],
                     ["plan_tier", "Plan"],
+                    ["reports_consumed", "Reports"],
                     ["members", "Users"],
                     ["documents", "Docs"],
                     ["checks", "Checks"],
@@ -276,7 +313,12 @@ export function TenantsSection() {
                   </td>
                   <td className="text-fg-dim">{t.industry}</td>
                   <td className="text-fg-dim">{t.jurisdiction}</td>
-                  <td className="text-fg-dim">{t.plan_tier}</td>
+                  <td className="whitespace-nowrap">
+                    <PlanBadge row={t} />
+                  </td>
+                  <td>
+                    <ReportsCell row={t} />
+                  </td>
                   <td className="num">{t.members}</td>
                   <td className="num">{t.documents}</td>
                   <td className="num">{t.checks}</td>
@@ -307,7 +349,7 @@ export function TenantsSection() {
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={10}>
+                  <td colSpan={11}>
                     <Empty>No tenants match.</Empty>
                   </td>
                 </tr>
