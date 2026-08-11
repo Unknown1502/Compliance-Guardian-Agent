@@ -192,3 +192,13 @@ variable "payment_prices" {
   type        = map(string)
   default     = {}
 }
+
+variable "alert_email" {
+  description = <<-EOT
+    Address that monitoring alerts are mailed to. Empty disables the
+    notification channel, so the policies still exist but page nobody —
+    which is the state this project was in (implicitly) until 2026-08-11.
+  EOT
+  type        = string
+  default     = ""
+}

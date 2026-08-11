@@ -78,6 +78,19 @@ resource "google_bigquery_dataset_iam_member" "reader_select" {
   member     = "serviceAccount:${google_service_account.cg_reader.email}"
 }
 
+# The reporting agent records each generated report as a row in the reports
+# table, which cgAuditReader cannot do — it is SELECT-only by design. Bound on
+# the TABLE, not the dataset: cg_reader already holds jobs.create, so granting
+# updateData dataset-wide would give it DML over the append-only audit trail
+# and destroy the guarantee that only cg_gateway is a documented exception to.
+# Table scope keeps audit_logs untouchable while letting reports be written.
+resource "google_bigquery_table_iam_member" "reader_writes_reports" {
+  dataset_id = google_bigquery_dataset.audit.dataset_id
+  table_id   = google_bigquery_table.reports.table_id
+  role       = google_project_iam_custom_role.audit_appender.id
+  member     = "serviceAccount:${google_service_account.cg_reader.email}"
+}
+
 # Firestore: runtime SA gets datastore.user (documents + checks live state).
 resource "google_project_iam_member" "runtime_firestore" {
   project = var.project_id
@@ -112,6 +125,14 @@ resource "google_storage_bucket_iam_member" "reader_reports_bucket" {
   bucket = google_storage_bucket.reports.name
   role   = "roles/storage.objectAdmin"
   member = "serviceAccount:${google_service_account.cg_reader.email}"
+}
+
+# The reporting agent writes report HTML here, and it now runs as cg_runtime
+# rather than cg_reader (see the reporting agent's service_account for why).
+resource "google_storage_bucket_iam_member" "runtime_reports_bucket" {
+  bucket = google_storage_bucket.reports.name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.cg_runtime.email}"
 }
 
 resource "google_storage_bucket_iam_member" "reader_raw_docs_view" {

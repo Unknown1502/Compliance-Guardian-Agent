@@ -379,7 +379,20 @@ resource "google_cloud_run_v2_service" "reporting_agent" {
   location = var.region
 
   template {
-    service_account = google_service_account.cg_reader.email
+    # Runs as cg_runtime, not cg_reader. Despite the name, this service is not
+    # a reader: it streams a row into the reports table, appends an audit
+    # event, and writes report HTML to GCS. cg_reader could do none of those,
+    # so report generation failed here every time it was attempted.
+    #
+    # The alternative — granting cg_reader append on audit_logs — would have
+    # been worse than the bug. cg_reader holds bigquery.jobs.create, so adding
+    # tables.updateData would give it DML over the append-only audit trail and
+    # break the guarantee that cg_gateway is the only documented exception to.
+    # cg_runtime appends without jobs.create, so the trail stays unrewritable.
+    #
+    # Also makes this consistent with every other agent, all of which already
+    # run as cg_runtime. cg_reader is left in place but is now unused.
+    service_account = google_service_account.cg_runtime.email
 
     containers {
       image = "${local.service_image}/reporting-agent:latest"

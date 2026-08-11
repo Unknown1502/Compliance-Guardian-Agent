@@ -12,6 +12,7 @@ resource "google_project_service" "apis" {
     "secretmanager.googleapis.com",
     "iam.googleapis.com",
     "aiplatform.googleapis.com",
+    "monitoring.googleapis.com",
   ])
   service            = each.key
   disable_on_destroy = false

@@ -9,12 +9,14 @@ guessing even though IDs are server-generated).
 
 from __future__ import annotations
 
+import logging
 import os
 
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from google.cloud import firestore
+from pydantic import ValidationError
 
 from schema_validators import (
     EntitlementSource,
@@ -28,6 +30,8 @@ from schema_validators import (
     Tenant,
     TenantUser,
 )
+
+logger = logging.getLogger("cg.firestore_repo")
 
 # A Pro subscription's monthly allowance. Config, not a magic number buried
 # in a transaction — raising the plan's value should be one edit here.
@@ -381,11 +385,23 @@ class FirestoreRepo:
         self._db.collection(COLLECTION_DOCUMENTS).document(document_id).delete()
 
     def list_all_tenants(self, limit: int = 1000) -> list[Tenant]:
-        """All tenants. Used only by the scheduled retention sweep."""
-        return [
-            Tenant.model_validate(s.to_dict())
-            for s in self._db.collection(COLLECTION_TENANTS).limit(limit).stream()
-        ]
+        """Every tenant, skipping any document that will not validate.
+
+        Tenant is a StrictModel, so one document with an unexpected field
+        raises. This list drives the retention sweep and the weekly report's
+        tenant list, and failing the whole call would mean a single bad
+        record silently stops deletions and reports for every other
+        workspace. Skipping the bad one is the safer failure: the rest of the
+        estate keeps working, and the exception is logged with the document
+        id so it can actually be fixed.
+        """
+        out: list[Tenant] = []
+        for snap in self._db.collection(COLLECTION_TENANTS).limit(limit).stream():
+            try:
+                out.append(Tenant.model_validate(snap.to_dict()))
+            except ValidationError:
+                logger.exception("skipping malformed tenant document %s", snap.id)
+        return out
 
     # -- documents ----------------------------------------------------------
 

@@ -98,9 +98,12 @@ main:
                         args:
                           text: '${"report generation failed for " + tenant_id + ": " + json.encode_to_string(e)}'
                           severity: ERROR
+                    # ${} matters: a bare tenant_id here is the literal
+                    # string "tenant_id", so the failure record used to name
+                    # no tenant at all. Confirmed against a real run.
                     - skip_tenant:
                         assign:
-                          - report_response: {body: {report_id: "error", tenant_id: tenant_id}}
+                          - report_response: {body: {report_id: "error", tenant_id: '${tenant_id}'}}
 
             - collect_result:
                 assign:
