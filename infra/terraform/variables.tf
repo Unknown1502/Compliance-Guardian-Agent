@@ -83,11 +83,17 @@ variable "platform_admin_uids" {
     operator console at once. Anything the live service needs must be here,
     or an apply will eventually delete it.
 
-    Empty means nobody is a platform admin — closed by default, which is the
-    right failure mode for a cross-tenant surface.
+    Empty means nobody is a platform admin — closed, which is the right
+    failure mode for a cross-tenant surface. Set it to "" deliberately if
+    that is what you want.
+
+    REQUIRED (no default) on purpose. terraform.tfvars is gitignored because
+    the repository is public, so a fresh checkout has no values. A default
+    here would let such an apply quietly empty the allowlist and lock every
+    operator out — which is exactly what happened once already. With no
+    default, that apply fails and asks, instead of succeeding wrongly.
   EOT
   type        = string
-  default     = ""
 }
 
 variable "admin_console_origin" {
@@ -154,9 +160,11 @@ variable "enable_razorpay" {
     than one payment method. Flip to true only after cg-razorpay-key-id,
     cg-razorpay-key-secret and cg-razorpay-webhook-secret all have a
     version.
+
+    REQUIRED (no default). See enable_paypal for why the payment gates must
+    be stated explicitly rather than defaulted.
   EOT
   type        = bool
-  default     = false
 }
 
 variable "enable_paypal" {
@@ -164,20 +172,33 @@ variable "enable_paypal" {
     Gates the PayPal secret_key_ref env vars on the API gateway. Requires
     cg-paypal-client-id and cg-paypal-secret to have versions populated. See
     enable_razorpay for the failure mode this prevents.
+
+    REQUIRED (no default), because the safe-looking default was the danger.
+    terraform.tfvars is gitignored — the repository is public — so an apply
+    from a fresh checkout would have taken `false`, stripped PAYPAL_CLIENT_ID
+    and PAYPAL_SECRET off the gateway, and silently ended the ability of every
+    customer outside India to pay. Cloud Run replaces its env list wholesale
+    on apply, so that removal needs no explicit instruction to happen.
+
+    An apply with no value now fails and names the variable. Loud beats safe
+    when "safe" means quietly turning revenue off.
   EOT
   type        = bool
-  default     = false
 }
 
 variable "paypal_live" {
   description = <<-EOT
-    false uses PayPal's sandbox API, true uses live. Defaults to sandbox so a
-    misconfiguration cannot move real money. The credentials in Secret Manager
-    must match this setting — sandbox credentials against the live API simply
-    fail to authenticate.
+    false uses PayPal's sandbox API, true uses live. The credentials in Secret
+    Manager must match this setting — sandbox credentials against the live API
+    simply fail to authenticate, and live credentials against sandbox 401 on
+    every call.
+
+    REQUIRED (no default). It always moves together with enable_paypal: this
+    deployment stores LIVE credentials, so defaulting to sandbox would not be
+    the cautious choice it looks like — it would point real keys at the wrong
+    host and break checkout for everyone.
   EOT
   type        = bool
-  default     = false
 }
 
 variable "payment_prices" {

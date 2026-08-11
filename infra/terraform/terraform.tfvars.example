@@ -1,0 +1,55 @@
+# Copy to terraform.tfvars and fill in. The real file is gitignored because
+# this repository is PUBLIC and the values include operator email addresses.
+#
+# Read this first: Cloud Run replaces a service's env list wholesale on every
+# apply. Anything the live service needs must be declared in Terraform and set
+# here, or an apply will eventually delete it. That has already happened once
+# — CG_PLATFORM_ADMIN_UIDS and CG_CORS_ORIGINS were set by hand with
+# `gcloud run services update`, an unrelated apply rewrote the container's env
+# without them, and every platform admin lost the operator console at once.
+#
+# The variables below with no default will fail the plan if unset. That is
+# deliberate: a missing value here should stop the apply, not quietly revert
+# production to a default that turns payments or admin access off.
+
+project_id = "your-gcp-project-id"
+
+# --- Access -----------------------------------------------------------------
+
+# REQUIRED. Comma-separated emails/UIDs allowed to reach /api/platform/*.
+# "" is valid and means nobody — but say so explicitly.
+platform_admin_uids = "you@example.com,colleague@example.com"
+
+# Operators who may reply to support tickets. Reading the inbox and writing to
+# customers as the company are different privileges, hence a separate list.
+support_agents = "you@example.com"
+
+# Origin of the separate admin console, added to CORS.
+admin_console_origin = "https://your-admin-console.web.app"
+
+# Hard-403 unverified sessions. Turning this on locks out accounts created
+# before verification existed; the verification mail is sent either way.
+require_email_verification = false
+
+# --- Payments ---------------------------------------------------------------
+# All three are REQUIRED. Before flipping a gate to true, confirm every secret
+# it references has a real version: a secret_key_ref pointing at a version-less
+# secret stops the Cloud Run revision starting, which takes down the entire
+# gateway rather than just that payment method.
+
+# Needs cg-razorpay-key-id, cg-razorpay-key-secret, cg-razorpay-webhook-secret.
+enable_razorpay = false
+
+# Needs cg-paypal-client-id and cg-paypal-secret.
+enable_paypal = false
+
+# Must match the credentials you stored. Live keys against the sandbox host
+# 401 on every call, so this moves together with enable_paypal.
+paypal_live = false
+
+# --- Monitoring -------------------------------------------------------------
+
+# Where alerts are mailed. Empty creates the policies with no channel, which
+# is indistinguishable from having no monitoring — the state that let a weekly
+# job fail every Monday for three weeks unnoticed.
+alert_email = "you@example.com"
