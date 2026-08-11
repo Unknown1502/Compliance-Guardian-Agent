@@ -1,44 +1,84 @@
 # Cloud Workflows — scheduled compliance report generation.
 #
-# Deployed to Cloud Workflows and triggered by Cloud Scheduler (weekly, Monday
-# 07:00 UTC). For each active tenant it calls the Reporting Agent's
-# POST /internal/report endpoint via the API Gateway.
+# Triggered by Cloud Scheduler every Monday 07:00 UTC. For each tenant
+# entitled to a scheduled report it calls the Reporting Agent's
+# POST /internal/report endpoint.
 #
-# Deploy (once Terraform apply has run):
-#   gcloud workflows deploy cg-weekly-report \
-#     --location=us-central1 \
-#     --source=infra/workflows/weekly_report.yaml \
-#     --service-account=<runtime-sa>@<project>.iam.gserviceaccount.com
+# It calls the Reporting Agent DIRECTLY, not the API Gateway. Two reasons:
+# the gateway serves no /internal/* routes (this workflow spent its whole
+# life POSTing to a 404), and the gateway is invokable by allUsers, so moving
+# an internal endpoint onto it would publish unauthenticated report
+# generation to the internet. The Reporting Agent is IAM-locked to the
+# runtime service account, which is what actually protects this call.
 #
-# Variables injected at deploy time (or via argument overrides):
-#   ${api_gateway_url}    — Cloud Run URL of the API Gateway
-#   ${internal_token}     — INTERNAL_TASK_TOKEN value from Secret Manager
-#   The tenant list is currently hardcoded as an argument; in production it
-#   would be fetched from a Firestore tenants query step.
+# Arguments (supplied by the Cloud Scheduler job in Terraform):
+#   reporting_agent_url  — REQUIRED. Cloud Run URL of the Reporting Agent,
+#                          scheme included.
+#   internal_token       — optional INTERNAL_TASK_TOKEN value.
+#   tenants              — optional explicit tenant list. Omitted by the
+#                          scheduler so production follows the live customer
+#                          list; supply it to re-run one tenant by hand.
 
 main:
   params: [args]
   steps:
     - init:
         assign:
-          - api_url: ${default(map.get(args, "api_gateway_url"), sys.get_env("GOOGLE_CLOUD_WORKFLOW_EXECUTION_ID"))}
-          - period_end: ${text.substring(time.format(sys.now()), 0, 10)}
-          - period_start_ts: ${sys.now() - 60 * 60 * 24 * 7}
-          - period_start: ${text.substring(time.format(period_start_ts), 0, 10)}
-          - tenants: ${default(map.get(args, "tenants"), ["tenant-sunrise-care", "tenant-coastal-fresh"])}
+          - base_url: ${default(map.get(args, "reporting_agent_url"), "")}
           - token: ${default(map.get(args, "internal_token"), "")}
+          - tenants: ${default(map.get(args, "tenants"), [])}
+          - period_end_ts: ${sys.now()}
+          - period_start_ts: ${period_end_ts - 60 * 60 * 24 * 7}
+          - period_end: ${text.substring(time.format(period_end_ts), 0, 10)}
+          - period_start: ${text.substring(time.format(period_start_ts), 0, 10)}
           - results: []
+
+    # Fail loudly on a missing URL. The previous version defaulted to a
+    # workflow execution id, which is not a URL, so a misconfigured trigger
+    # produced a confusing HTTP error instead of naming the actual problem.
+    - require_base_url:
+        switch:
+          - condition: ${base_url == ""}
+            raise: "reporting_agent_url argument is required"
+
+    # An explicit list wins, so a single tenant can be re-run by hand.
+    - have_explicit_tenants:
+        switch:
+          - condition: ${len(tenants) > 0}
+            next: generate_reports
+
+    - fetch_tenants:
+        call: http.get
+        args:
+          url: ${base_url + "/internal/report-tenants"}
+          auth:
+            type: OIDC
+          headers:
+            X-Internal-Token: ${token}
+        result: tenants_response
+
+    - assign_fetched_tenants:
+        assign:
+          - tenants: ${tenants_response.body.tenant_ids}
+
+    - log_tenant_count:
+        call: sys.log
+        args:
+          text: '${"weekly report: " + len(tenants) + " tenant(s) for " + period_start + " to " + period_end}'
+          severity: INFO
 
     - generate_reports:
         for:
           value: tenant_id
           in: ${tenants}
           steps:
+            # One tenant's failure must not abandon the rest of the run, so
+            # each call is isolated and the error recorded as a result.
             - call_reporting_agent:
                 try:
                   call: http.post
                   args:
-                    url: ${api_url + "/internal/report"}
+                    url: ${base_url + "/internal/report"}
                     auth:
                       type: OIDC
                     headers:

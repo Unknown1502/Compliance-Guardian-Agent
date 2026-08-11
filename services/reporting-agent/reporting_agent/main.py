@@ -5,6 +5,11 @@ Endpoints:
         Generates a report for the period and writes HTML to GCS + BQ row.
         Invoked by the API Gateway (on-demand) or Cloud Workflows (scheduled).
 
+    GET  /internal/report-tenants
+        Which tenants the weekly workflow should generate for. Exists so the
+        scheduled run follows the real customer list instead of a hardcoded
+        one; see the endpoint for why the filter lives here and not in YAML.
+
     GET  /reports/{report_id}/html
         Proxies the report HTML from GCS for dashboard display.
 
@@ -30,8 +35,10 @@ from gcp_clients import (
     reports_table,
     storage_client,
 )
+from gcp_clients.firestore_repo import FirestoreRepo
 from gemini_client import GeminiClient, GeminiConfigError
 from pydantic import BaseModel, Field
+from schema_validators import EntitlementSource, TenantStatus
 
 from reporting_agent.reporter import generate_report
 
@@ -46,6 +53,7 @@ _state: dict = {}
 def _deps() -> dict:
     if not _state:
         _state["db"] = firestore_client()
+        _state["repo"] = FirestoreRepo(_state["db"])
         _state["bq"] = bigquery_client()
         _state["storage"] = storage_client()
         _state["auditor"] = AuditLogger(_state["bq"], audit_dataset(), audit_table())
@@ -87,9 +95,46 @@ class ReportResponse(BaseModel):
     used_fixture: bool
 
 
+class ReportTenantsResponse(BaseModel):
+    tenant_ids: list[str]
+
+
 @app.get("/healthz")
 def healthz() -> dict:
     return {"status": "ok", "service": "reporting-agent"}
+
+
+@app.get("/internal/report-tenants", response_model=ReportTenantsResponse)
+def list_report_tenants(
+    x_internal_token: str | None = Header(default=None),
+) -> ReportTenantsResponse:
+    """Tenants the weekly workflow should generate a scheduled report for.
+
+    Narrower than "every tenant", on purpose:
+
+      * SUSPENDED workspaces are excluded. Suspension stops a workspace being
+        used; quietly continuing to produce its reports would contradict that.
+      * Only PRO workspaces are included. A recurring report is the thing a
+        subscription buys — a FREE or one-time workspace has not bought it,
+        and generating one anyway spends Gemini quota to give away the paid
+        feature.
+
+    The filter lives here rather than in the workflow YAML because Cloud
+    Workflows cannot see the Tenant model, and a rule this close to billing
+    belongs in code that can be tested. Scheduled generation deliberately does
+    not touch consume_report_entitlement: that counter meters what a customer
+    asks for, and an automated run they did not request must not spend it.
+    """
+    _check_internal_token(x_internal_token)
+    tenants = _deps()["repo"].list_all_tenants()
+    return ReportTenantsResponse(
+        tenant_ids=[
+            t.tenant_id
+            for t in tenants
+            if t.status is TenantStatus.ACTIVE
+            and t.entitlement_source is EntitlementSource.PRO
+        ]
+    )
 
 
 @app.post("/internal/report", response_model=ReportResponse)

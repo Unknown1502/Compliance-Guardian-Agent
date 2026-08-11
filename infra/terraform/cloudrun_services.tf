@@ -444,9 +444,16 @@ resource "google_cloud_scheduler_job" "weekly_report" {
     uri         = "https://workflowexecutions.googleapis.com/v1/${google_workflows_workflow.weekly_report.id}/executions"
     http_method = "POST"
 
+    # `.uri` already carries the scheme — the previous value wrapped it in
+    # another "https://" and handed the workflow https://https://... Compare
+    # outputs.tf, which uses the same attribute bare.
+    #
+    # Targets the Reporting Agent, not the gateway: /internal/report exists
+    # only on the agent, and the gateway is allUsers-invokable so an internal
+    # route there would be publicly reachable.
     body = base64encode(jsonencode({
       argument = jsonencode({
-        api_gateway_url = "https://${google_cloud_run_v2_service.api_gateway.uri}"
+        reporting_agent_url = google_cloud_run_v2_service.reporting_agent.uri
       })
     }))
 

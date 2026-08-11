@@ -293,3 +293,84 @@ class TestOutputEscaping:
             prompt_version="v",
         )
         assert "<script>bad" not in html_doc
+
+
+class TestReportTenantsEndpoint:
+    """Who a scheduled run generates for.
+
+    The weekly workflow used to iterate a hardcoded pair of fixture tenants,
+    so these pin down the rule that replaced it: active Pro subscribers only.
+    """
+
+    @staticmethod
+    def _tenant(tenant_id, source, status):
+        from schema_validators import Tenant
+
+        return Tenant(
+            tenant_id=tenant_id,
+            name=tenant_id,
+            industry="disability-services",
+            jurisdiction="AU-NDIS",
+            entitlement_source=source,
+            status=status,
+        )
+
+    def _client(self, tenants, monkeypatch):
+        from fastapi.testclient import TestClient
+        from reporting_agent import main as rmain
+
+        class FakeRepo:
+            def list_all_tenants(self, limit=1000):
+                return tenants
+
+        # _deps() only builds real GCP clients when _state is empty, so
+        # seeding it keeps this hermetic.
+        monkeypatch.setitem(rmain._state, "repo", FakeRepo())
+        return TestClient(rmain.app)
+
+    def test_includes_only_active_pro_tenants(self, monkeypatch):
+        from schema_validators import EntitlementSource, TenantStatus
+
+        client = self._client(
+            [
+                self._tenant("t-pro", EntitlementSource.PRO, TenantStatus.ACTIVE),
+                self._tenant("t-free", EntitlementSource.FREE, TenantStatus.ACTIVE),
+            ],
+            monkeypatch,
+        )
+        resp = client.get("/internal/report-tenants")
+        assert resp.status_code == 200
+        assert resp.json()["tenant_ids"] == ["t-pro"]
+
+    def test_suspended_pro_tenant_is_excluded(self, monkeypatch):
+        from schema_validators import EntitlementSource, TenantStatus
+
+        client = self._client(
+            [self._tenant("t-susp", EntitlementSource.PRO, TenantStatus.SUSPENDED)],
+            monkeypatch,
+        )
+        assert client.get("/internal/report-tenants").json()["tenant_ids"] == []
+
+    def test_one_time_buyer_is_not_a_subscriber(self, monkeypatch):
+        """SINGLE paid once. A recurring report is not what they bought."""
+        from schema_validators import EntitlementSource, TenantStatus
+
+        client = self._client(
+            [self._tenant("t-single", EntitlementSource.SINGLE, TenantStatus.ACTIVE)],
+            monkeypatch,
+        )
+        assert client.get("/internal/report-tenants").json()["tenant_ids"] == []
+
+    def test_internal_token_enforced_when_configured(self, monkeypatch):
+        from schema_validators import EntitlementSource, TenantStatus
+
+        monkeypatch.setenv("INTERNAL_TASK_TOKEN", "s3cret")
+        client = self._client(
+            [self._tenant("t-pro", EntitlementSource.PRO, TenantStatus.ACTIVE)],
+            monkeypatch,
+        )
+        assert client.get("/internal/report-tenants").status_code == 403
+        ok = client.get(
+            "/internal/report-tenants", headers={"X-Internal-Token": "s3cret"}
+        )
+        assert ok.status_code == 200
