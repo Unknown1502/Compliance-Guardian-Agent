@@ -31,10 +31,30 @@ Data privacy: encryption at rest/in transit, tenant data isolation.
 Explainability: every risk score must include a plain-language justification.
 
 2. High-level architecture
-Client (dashboard + integrations) → API Gateway/Auth → Orchestrator Agent (Cloud Run) → sub-agents (Ingestion, Compliance, Reporting) → Gemini API for reasoning → Firestore for live task/document state → BigQuery for immutable audit logs → Cloud Storage for raw files → Cloud Tasks/Workflows for async orchestration.
+Client (dashboard + integrations) → API Gateway/Auth (Cloud Run) → Cloud Tasks →
+sub-agents (Ingestion, Compliance) → Gemini API for reasoning → Firestore for live
+task/document state → BigQuery for immutable audit logs → Cloud Storage for raw files.
+Escalation Service handles reviewer decisions; Reporting Agent produces summaries and
+is driven both on demand and by Cloud Workflows + Scheduler.
+
+NOTE — this originally described an "Orchestrator Agent (Cloud Run)". That was the
+design intent, not what shipped. `services/orchestrator/` is a **library imported by
+the API Gateway**, not a deployed service: Cloud Build builds five images
+(api-gateway, ingestion-agent, compliance-agent, escalation-service, reporting-agent)
+and there is no sixth. The gateway owns task lifecycle and dispatches through Cloud
+Tasks itself. Diagrams predating 2026-08-12 show the orchestrator as a service and
+omit the Escalation Service entirely; see the README for the current architecture.
 
 3. Low-level component design
-Each service exposes a narrow REST contract. Orchestrator handles task lifecycle (POST /tasks, GET /tasks/:id). Compliance service chains a rule engine → Gemini reasoning module → risk scorer. Reporting service pulls from a template store and fills reports using Gemini-generated summaries.
+Each service exposes a narrow REST contract. The gateway owns task lifecycle via the
+orchestrator library. Compliance service chains a rule engine → Gemini reasoning
+module → risk scorer. Reporting service pulls from a template store and fills reports
+using Gemini-generated summaries.
+
+Internal routes live on the agents, never on the gateway. The gateway is
+`allUsers`-invokable so the browser can reach it, which means an `/internal/*` route
+placed there would be publicly reachable. The agents are IAM-locked to `cg-runtime`,
+and that is what actually protects them.
 
 4. Data model (core entities)
 Tenant — business id, industry, jurisdiction, plan tier.
@@ -137,10 +157,17 @@ Full explainability: every AI decision traceable to source data + rule version.
 Audit trail immutability (append-only log).
 
 3. High-level architecture
-Client (dashboard + integrations) → API Gateway/Auth → Orchestrator Agent (Cloud Run) → sub-agents (Ingestion, Compliance, Reporting) → Gemini API for reasoning → Firestore for live task state → BigQuery for audit logs → Cloud Storage for raw files → Cloud Tasks/Workflows for async orchestration.
+Client (dashboard + integrations) → API Gateway/Auth (Cloud Run) → Cloud Tasks →
+sub-agents (Ingestion, Compliance) → Gemini API for reasoning → Firestore for live task
+state → BigQuery for audit logs → Cloud Storage for raw files. Escalation Service for
+reviewer decisions, Reporting Agent for summaries, Cloud Workflows + Scheduler for the
+weekly run. See the note in section 2 — the orchestrator is a library inside the
+gateway, not a deployed Cloud Run service.
 
 4. Low-level component design
-Orchestrator exposes POST /tasks, GET /tasks/:id. Compliance service chains Rule Engine → Gemini Reasoning Module → Risk Scorer → Report Generator, with a Template Store feeding standardized report formats.
+The gateway exposes task lifecycle routes via the orchestrator library. Compliance
+service chains Rule Engine → Gemini Reasoning Module → Risk Scorer → Report Generator,
+with a Template Store feeding standardized report formats.
 
 5. Data model (ERD)
 Tenant → Documents → Compliance Checks → Audit Logs, with Compliance Checks optionally escalated to a Reviewer, and Tenants generating Reports over time. Full entity/field breakdown is in the ERD diagram above.
