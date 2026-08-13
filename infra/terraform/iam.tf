@@ -105,6 +105,87 @@ resource "google_storage_bucket_iam_member" "runtime_reports_bucket" {
   member = "serviceAccount:${google_service_account.cg_runtime.email}"
 }
 
+# ---------------------------------------------------------------------------
+# Quarantine — the malware trust boundary, enforced by IAM rather than by
+# application code.
+#
+# Note what is deliberately ABSENT: cg_runtime gets no binding on the
+# quarantine bucket at all. The ingestion and compliance agents run as
+# cg_runtime, so even if a bug pointed one of them at a quarantined object,
+# the read is denied by Google before any of our code runs. That is the whole
+# reason quarantine is a separate bucket and not a prefix.
+# ---------------------------------------------------------------------------
+
+resource "google_service_account" "cg_scanner" {
+  account_id   = "cg-scanner"
+  display_name = "ComplianceGuardian scanner (only reader of quarantine)"
+}
+
+# The gateway writes uploads here. objectCreator, NOT objectAdmin: the gateway
+# must be able to put a file into quarantine and must not be able to read one
+# back out, so a compromised gateway cannot use quarantine as a staging area
+# to retrieve arbitrary tenants' unscanned uploads.
+resource "google_storage_bucket_iam_member" "gateway_quarantine_write" {
+  bucket = google_storage_bucket.quarantine.name
+  role   = "roles/storage.objectCreator"
+  member = "serviceAccount:${google_service_account.cg_gateway.email}"
+}
+
+# The scanner is the only identity that may read quarantined bytes, and the
+# only one that may delete them after promotion.
+resource "google_storage_bucket_iam_member" "scanner_quarantine_admin" {
+  bucket = google_storage_bucket.quarantine.name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.cg_scanner.email}"
+}
+
+# Promotion target: the scanner writes the cleared copy into approved storage.
+resource "google_storage_bucket_iam_member" "scanner_raw_docs_write" {
+  bucket = google_storage_bucket.raw_docs.name
+  role   = "roles/storage.objectCreator"
+  member = "serviceAccount:${google_service_account.cg_scanner.email}"
+}
+
+# Firestore: read the document, write the scan verdict.
+resource "google_project_iam_member" "scanner_datastore" {
+  project = var.project_id
+  role    = "roles/datastore.user"
+  member  = "serviceAccount:${google_service_account.cg_scanner.email}"
+}
+
+# Audit: append-only, same custom role as the other agents. Not
+# bigquery.dataEditor — the scanner must not be able to rewrite the trail that
+# records what it rejected.
+resource "google_project_iam_member" "scanner_audit_appender" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.audit_appender.id
+  member  = "serviceAccount:${google_service_account.cg_scanner.email}"
+}
+
+# The scanner hands a cleared document on to ingestion.
+resource "google_project_iam_member" "scanner_tasks_enqueuer" {
+  project = var.project_id
+  role    = "roles/cloudtasks.enqueuer"
+  member  = "serviceAccount:${google_service_account.cg_scanner.email}"
+}
+
+resource "google_project_iam_member" "scanner_log_writer" {
+  project = var.project_id
+  role    = "roles/logging.logWriter"
+  member  = "serviceAccount:${google_service_account.cg_scanner.email}"
+}
+
+# Cloud Tasks OIDC: tasks invoke the scanner as cg_runtime, so cg_runtime must
+# hold run.invoker on it — the invoker identity, distinct from the scanner's
+# own runtime identity above.
+resource "google_cloud_run_v2_service_iam_member" "scanner_invoker" {
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.scanner_agent.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.cg_runtime.email}"
+}
+
 # Cloud Tasks: runtime SA can enqueue tasks.
 resource "google_project_iam_member" "runtime_tasks_enqueuer" {
   project = var.project_id
@@ -184,10 +265,48 @@ resource "google_secret_manager_secret_iam_member" "runtime_reads_gemini_key" {
 # that invoke ingestion/compliance as cg_runtime.
 # ---------------------------------------------------------------------------
 
-resource "google_bigquery_dataset_iam_member" "gateway_appender" {
+# The gateway deliberately has NO append permission on the audit dataset.
+#
+# It must keep roles/bigquery.jobUser: /api/audit-logs and five platform-admin
+# routes run SELECT queries. But jobs.create together with
+# bigquery.tables.updateData is exactly what DML requires — so an identity
+# holding both can UPDATE or DELETE the append-only trail. The custom role's
+# own comment ("no jobs.create → no DML possible") is true of the role in
+# isolation and was false for this service account in combination.
+#
+# Appends now go through cg-audit-writer, which holds the appender role and
+# does NOT hold jobUser. Neither identity can rewrite history:
+#
+#   cg-gateway       jobs.create + read   → SELECT yes, append no
+#   cg-audit-writer  append               → insert yes, statements no
+#
+# Removing this binding is the control. Do not re-add it to make something
+# work; route the write through the writer service instead.
+
+resource "google_service_account" "cg_audit_writer" {
+  account_id   = "cg-audit-writer"
+  display_name = "ComplianceGuardian audit writer (append-only, no jobs.create)"
+}
+
+resource "google_bigquery_dataset_iam_member" "audit_writer_appender" {
   dataset_id = google_bigquery_dataset.audit.dataset_id
   role       = google_project_iam_custom_role.audit_appender.id
-  member     = "serviceAccount:${google_service_account.cg_gateway.email}"
+  member     = "serviceAccount:${google_service_account.cg_audit_writer.email}"
+}
+
+resource "google_project_iam_member" "audit_writer_log_writer" {
+  project = var.project_id
+  role    = "roles/logging.logWriter"
+  member  = "serviceAccount:${google_service_account.cg_audit_writer.email}"
+}
+
+# Only the gateway may call it.
+resource "google_cloud_run_v2_service_iam_member" "audit_writer_invoker" {
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.audit_writer.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.cg_gateway.email}"
 }
 
 resource "google_bigquery_dataset_iam_member" "gateway_reader" {

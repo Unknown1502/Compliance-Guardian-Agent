@@ -171,6 +171,45 @@ resource "google_storage_bucket" "reports" {
   uniform_bucket_level_access = true
   public_access_prevention    = "enforced"
 
+  # A rendered report is compliance evidence a customer may be asked to
+  # produce years later. Without this, an accidental delete or an overwrite by
+  # a re-run is unrecoverable — raw_docs has had versioning from the start and
+  # this bucket was the inconsistency.
+  #
+  # Declared here as well as enabled on the live bucket: Terraform reverts
+  # versioning to disabled if the resource does not mention it, so a
+  # hand-enabled setting would silently disappear on the next apply.
+  versioning {
+    enabled = true
+  }
+
+  depends_on = [google_project_service.apis]
+}
+
+# Untrusted uploads. A separate bucket rather than a prefix inside raw_docs so
+# the trust boundary can be enforced by IAM: the ingestion and compliance
+# service accounts are granted nothing here, so even a bug in the application
+# layer cannot hand a worker unscanned bytes — the read would be denied.
+#
+# Only the gateway (write) and the scanner (read + delete) touch it.
+resource "google_storage_bucket" "quarantine" {
+  name                        = "${var.project_id}-cg-quarantine"
+  location                    = var.region
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+
+  # Infected uploads stay here as evidence, but not forever. 90 days is long
+  # enough to investigate an incident and short enough that the bucket does
+  # not become an indefinitely-growing malware archive.
+  lifecycle_rule {
+    action {
+      type = "Delete"
+    }
+    condition {
+      age = 90
+    }
+  }
+
   depends_on = [google_project_service.apis]
 }
 

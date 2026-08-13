@@ -31,12 +31,17 @@ const PLANS = [
   {
     id: "subscription" as const,
     icon: Repeat,
-    title: "Unlimited",
-    description: "Every document, every month, no per-audit decision to make.",
+    title: "ComplianceGuardian Pro",
+    description: "Continuous compliance automation for your team.",
+    // Deliberately not "unlimited". Rate limits and entitlement checks are
+    // real controls, so the word would promise something the backend does
+    // not deliver — and it is the kind of promise a customer quotes back.
     features: [
-      "Unlimited compliance checks",
+      "Continuous compliance checks",
       "Weekly Gemini-authored reports",
-      "Cancel any time",
+      "Report downloads",
+      "Team/Owner workflows",
+      "Cancel any time · fair-use policy applies",
     ],
     highlight: true,
   },
@@ -186,7 +191,7 @@ export function BillingView() {
         amount: order.amount,
         currency: order.currency,
         name: "ComplianceGuardian",
-        description: plan === "subscription" ? "Unlimited audits" : "Single audit",
+        description: plan === "subscription" ? "ComplianceGuardian Pro" : "Single audit",
         prefill: { email: session.email ?? "" },
         theme: { color: "#1d4ed8" },
         modal: { ondismiss: () => setBusy(null) },

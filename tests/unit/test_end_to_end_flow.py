@@ -218,6 +218,7 @@ class FakeGateway:
         self.auditor = FakeAuditor()
         self.storage = FakeStorage()
         self.raw_bucket = "cg-test-raw"
+        self.quarantine_bucket = "cg-test-quarantine"
         self._svc = FakeTaskService()
 
     def task_service(self):

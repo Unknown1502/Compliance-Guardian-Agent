@@ -86,6 +86,8 @@ class FakeGateway:
         self.auditor = FakeAuditor()
         self.storage = FakeStorage()
         self.raw_bucket = "test-raw-bucket"
+        # Uploads land in quarantine; only the scanner promotes to raw_bucket.
+        self.quarantine_bucket = "test-quarantine-bucket"
 
     def task_service(self):
         return FakeTaskService()

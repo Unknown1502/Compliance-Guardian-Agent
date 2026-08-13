@@ -44,6 +44,7 @@ def _service() -> TaskService:
             location=os.environ.get("CLOUD_TASKS_LOCATION", "us-central1"),
             queue=os.environ.get("CLOUD_TASKS_QUEUE", "cg-task-queue"),
             target_urls={
+                "scan": os.environ.get("SCANNER_URL", ""),
                 "ingest": os.environ.get("INGESTION_URL", ""),
                 "check": os.environ.get("COMPLIANCE_URL", ""),
             },

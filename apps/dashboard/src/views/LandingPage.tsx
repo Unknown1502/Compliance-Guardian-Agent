@@ -314,24 +314,50 @@ export function LandingPage() {
         surface="surface-2"
         eyebrow="Pricing"
         title="Your first audit is free"
-        subtitle="After that, pay per audit or go unlimited. No setup fee, no lock-in."
+        subtitle="After that, pay per audit or move to continuous checks. No setup fee, no lock-in."
       >
         <div className="mx-auto mt-14 grid max-w-xl gap-5 sm:grid-cols-2">
+          {/* Prices mirror shared/payments/_DEFAULT_PRICES, which is what the
+              server actually charges. INR leads because Razorpay settles the
+              domestic price; the USD figure is the same plan through PayPal,
+              not a second product. Nothing here reaches the server — the client
+              names a plan and the server looks the price up. */}
           <div className="rounded-xl border border-line bg-surface p-6 text-left">
             <h3 className="text-[16px] font-bold text-ink">Single audit</h3>
             <div className="mt-3 flex items-baseline gap-1">
-              <span className="text-[30px] font-bold text-ink">$50</span>
-              <span className="text-[13px] text-ink-2">USD, one-off</span>
+              <span className="text-[30px] font-bold text-ink">₹1,999</span>
+              <span className="text-[13px] text-ink-2">one-time · $25 USD</span>
             </div>
-            <p className="mt-2 text-[13px] text-ink-2">One document, fully checked and cited.</p>
+            <p className="mt-2 text-[13px] text-ink-2">
+              One more document, one more risk-scored, cited compliance check.
+            </p>
+            <ul className="mt-3 space-y-1 text-[13px] text-ink-2">
+              <li>✓ Full Gemini extraction + risk score</li>
+              <li>✓ Cited rule verdicts</li>
+              <li>✓ Added to your audit trail</li>
+            </ul>
           </div>
           <div className="rounded-xl border border-brand-300 bg-brand-50/40 p-6 text-left">
-            <h3 className="text-[16px] font-bold text-ink">Unlimited</h3>
+            <h3 className="text-[16px] font-bold text-ink">ComplianceGuardian Pro</h3>
             <div className="mt-3 flex items-baseline gap-1">
-              <span className="text-[30px] font-bold text-ink">$99</span>
-              <span className="text-[13px] text-ink-2">USD /month</span>
+              <span className="text-[30px] font-bold text-ink">₹8,300</span>
+              <span className="text-[13px] text-ink-2">/ month · $99 USD</span>
             </div>
-            <p className="mt-2 text-[13px] text-ink-2">Every document, every month, cancel any time.</p>
+            <p className="mt-2 text-[13px] text-ink-2">
+              Continuous compliance automation for your team.
+            </p>
+            <ul className="mt-3 space-y-1 text-[13px] text-ink-2">
+              <li>✓ Continuous compliance checks</li>
+              <li>✓ Gemini extraction + risk scoring</li>
+              <li>✓ Cited compliance verdicts</li>
+              <li>✓ Audit trail</li>
+              <li>✓ Weekly AI compliance reports</li>
+              <li>✓ Report downloads</li>
+              <li>✓ Team/Owner workflows</li>
+            </ul>
+            {/* Not "unlimited": the rate limiters and entitlement checks are
+                real, so the word would be a promise the backend does not keep. */}
+            <p className="mt-3 text-[12px] text-muted">Fair-use policy applies.</p>
           </div>
         </div>
       </Section>

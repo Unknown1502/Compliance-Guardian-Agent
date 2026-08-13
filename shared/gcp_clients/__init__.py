@@ -74,6 +74,18 @@ def reports_bucket() -> str:
     return os.environ.get("GCS_BUCKET_REPORTS", f"{project_id()}-cg-reports")
 
 
+def quarantine_bucket() -> str:
+    """Where uploaded bytes live before a scanner has cleared them.
+
+    A separate bucket rather than a prefix inside raw-docs, so the boundary can
+    be an IAM one: the ingestion and compliance service accounts are not granted
+    read on this bucket at all. That way a bug in the application layer cannot
+    hand a worker an unscanned file — the worker could not read it even if it
+    tried.
+    """
+    return os.environ.get("GCS_BUCKET_QUARANTINE", f"{project_id()}-cg-quarantine")
+
+
 def reset_client_caches() -> None:
     """Test hook: clear cached clients (e.g., after monkeypatching env vars)."""
     firestore_client.cache_clear()

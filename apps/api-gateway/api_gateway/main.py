@@ -64,8 +64,11 @@ from schema_validators import (
     Document,
     DocumentStatus,
     PlanTier,
+    ReportRecord,
+    ReportStatus,
     ReviewComment,
     RulesetNotFoundError,
+    ScanStatus,
     TaskType,
     Tenant,
     TenantUser,
@@ -139,10 +142,23 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     logger.exception(
         "unhandled error %s on %s %s", error_id, request.method, request.url.path
     )
-    return JSONResponse(
+    response = JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={"detail": "internal server error", "error_id": error_id},
     )
+    # Starlette installs Exception handlers on ServerErrorMiddleware, which
+    # wraps CORSMiddleware rather than the reverse — so this response would
+    # otherwise carry no CORS headers, the browser would refuse to expose it,
+    # and every 500 would surface in the dashboard as an untraceable
+    # "Failed to fetch" instead of the error_id logged above. Exact-match
+    # against the configured list; never a wildcard, since credentials are
+    # allowed.
+    origin = request.headers.get("origin")
+    if origin and origin in CORS_ORIGINS:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Vary"] = "Origin"
+    return response
 
 _gateway: Gateway | None = None
 
@@ -412,6 +428,86 @@ class ReportResponse(BaseModel):
     used_fixture: bool
     # Empty when PDF rendering failed; the client then falls back to HTML.
     pdf_ref: str = ""
+
+
+class ReportListItem(BaseModel):
+    report_id: str
+    created_at: str
+    size_bytes: int
+    # What can actually be fetched, not what was meant to exist. `has_pdf` is
+    # false for reports generated before PDF rendering existed and for any
+    # whose PDF render failed.
+    has_pdf: bool
+    has_html: bool
+    # Durable lifecycle state. "ready" for anything whose artifact is present
+    # in storage, including reports that predate durable records.
+    status: str = ReportStatus.READY.value
+
+
+class ReportStatusResponse(BaseModel):
+    """The durable state of one report.
+
+    No storage_key: the client never needs a bucket path, and the download
+    endpoint builds its own from the caller's verified tenant claim rather
+    than from anything sent back to it.
+    """
+
+    report_id: str
+    status: str
+    period_start: str
+    period_end: str
+    # True only for READY. Given its own field so the dashboard cannot get the
+    # rule wrong by comparing status strings itself.
+    downloadable: bool
+    format: str
+    size_bytes: int
+    total_checks: int
+    pass_count: int
+    fail_count: int
+    escalated_count: int
+    executive_summary: str
+    model_name: str
+    used_fixture: bool
+    attempts: int
+    # Generic; the detail stays in the record and the logs.
+    error: str
+    created_at: str
+
+
+#: Statuses where a task is already queued or running, so a repeat request
+#: must not queue a second one.
+_IN_FLIGHT = frozenset(
+    {
+        ReportStatus.QUEUED,
+        ReportStatus.GENERATING,
+        ReportStatus.VALIDATING,
+        ReportStatus.PERSISTING,
+        ReportStatus.VERIFYING,
+    }
+)
+
+
+def _report_status_response(r: ReportRecord) -> ReportStatusResponse:
+    return ReportStatusResponse(
+        report_id=r.report_id,
+        status=r.status.value,
+        period_start=r.period_start.isoformat(),
+        period_end=r.period_end.isoformat(),
+        downloadable=r.status is ReportStatus.READY,
+        format=r.format,
+        size_bytes=r.size_bytes,
+        total_checks=r.total_checks,
+        pass_count=r.pass_count,
+        fail_count=r.fail_count,
+        escalated_count=r.escalated_count,
+        executive_summary=r.executive_summary,
+        model_name=r.model_name,
+        used_fixture=r.used_fixture,
+        attempts=r.attempts,
+        # A customer is told generation failed, not which subsystem timed out.
+        error="Report generation failed. You can try again." if r.error else "",
+        created_at=r.created_at.isoformat(),
+    )
 
 
 class RuleResponse(BaseModel):
@@ -686,7 +782,11 @@ async def upload_document(
         buf.extend(chunk)
         if len(buf) > MAX_UPLOAD_BYTES:
             raise HTTPException(
-                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                # Not HTTP_413_CONTENT_TOO_LARGE: that spelling only exists in
+                # starlette >= 0.47, and fastapi<1 caps starlette below that —
+                # so it raised AttributeError here and the size guard answered
+                # 500 instead of 413. This name is present in both.
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 detail=f"file exceeds {MAX_UPLOAD_BYTES} bytes",
             )
     data = bytes(buf)
@@ -723,17 +823,26 @@ async def upload_document(
     # Hash the exact bytes received, before anything else touches them, so the
     # hash provably describes what was assessed.
     content_hash = hashlib.sha256(data).hexdigest()
-    bucket = g.storage.bucket(g.raw_bucket)
+    # Untrusted until a scanner says otherwise, so the bytes go to quarantine —
+    # a bucket the ingestion and compliance service accounts cannot read at
+    # all. MIME and magic-byte validation above narrow the shape of what gets
+    # here; they say nothing about whether the content is hostile.
+    bucket = g.storage.bucket(g.quarantine_bucket)
     bucket.blob(blob_path).upload_from_string(
         data, content_type=file.content_type or "application/octet-stream"
     )
-    storage_ref = f"gs://{g.raw_bucket}/{blob_path}"
+    quarantine_ref = f"gs://{g.quarantine_bucket}/{blob_path}"
 
     document = Document(
         document_id=document_id,
         tenant_id=auth.tenant_id,
         source=source,
-        storage_ref=storage_ref,
+        # Both point at quarantine until the scanner promotes the file and
+        # rewrites storage_ref. Nothing downstream may read it meanwhile —
+        # ingestion refuses any document whose scan_status is not CLEAN.
+        storage_ref=quarantine_ref,
+        quarantine_ref=quarantine_ref,
+        scan_status=ScanStatus.SCAN_PENDING,
         extracted_fields={},
         status=DocumentStatus.PENDING,
         content_hash=content_hash,
@@ -750,7 +859,8 @@ async def upload_document(
         before_state=None,
         after_state={
             "document_id": document_id,
-            "storage_ref": storage_ref,
+            "storage_ref": quarantine_ref,
+            "scan_status": ScanStatus.SCAN_PENDING.value,
             "source": source,
             # Recorded in the immutable trail, so the integrity claim is
             # anchored to something that cannot later be rewritten.
@@ -760,18 +870,19 @@ async def upload_document(
         },
     )
 
-    # Dispatch ingestion. In inline mode this runs Gemini synchronously; surface
-    # a clear 503 if no key is configured rather than failing opaquely.
+    # Dispatch SCANNING, not ingestion. The scanner is what dispatches ingest,
+    # and only after the file is clean — so there is no ordering in which a
+    # worker sees bytes the scanner has not passed.
     try:
         svc = g.task_service()
     except Exception as exc:  # GeminiConfigError etc.
-        logger.exception("ingestion pipeline unavailable for tenant %s", auth.tenant_id)
+        logger.exception("upload pipeline unavailable for tenant %s", auth.tenant_id)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="ingestion pipeline is temporarily unavailable",
+            detail="upload pipeline is temporarily unavailable",
         ) from exc
     task = svc.create_and_dispatch(
-        task_type=TaskType.INGEST, target_ref=document_id, tenant_id=auth.tenant_id
+        task_type=TaskType.SCAN, target_ref=document_id, tenant_id=auth.tenant_id
     )
     return UploadResponse(document_id=document_id, task_id=task.task_id, status=task.status.value)
 
@@ -1187,7 +1298,7 @@ def review_queue(auth: AuthContext = Depends(require_auth)) -> list[CheckRespons
 
 @app.get("/api/audit-logs")
 def get_audit_logs(
-    auth: AuthContext = Depends(require_auth),
+    auth: AuthContext = Depends(require_role("owner")),
     tenant_id: str | None = None,  # accepted for spec shape; IGNORED (see below)
     from_: str | None = None,
     to: str | None = None,
@@ -1196,6 +1307,13 @@ def get_audit_logs(
     # SECURITY: the client-supplied tenant_id query param is deliberately
     # ignored; the tenant is always the verified JWT claim. Cross-tenant reads
     # are impossible regardless of what the client passes.
+    #
+    # Owner/admin only. Generating an audit event and reading the workspace's
+    # whole trail are different privileges: this returns every member's actions
+    # with before/after state, so a reviewer reading it is a surveillance
+    # capability nobody granted them. require_role also excludes SERVICE_ROLE,
+    # which matters most here — API keys leak far more readily than passwords,
+    # and a leaked one could otherwise exfiltrate the entire audit history.
     if tenant_id and tenant_id != auth.tenant_id:
         logger.warning(
             "ignoring client tenant_id=%s; using claim %s", tenant_id, auth.tenant_id
@@ -1275,15 +1393,27 @@ def get_trends(
 # ---------------------------------------------------------------------------
 
 
-@app.post("/api/reports", response_model=ReportResponse)
+@app.post("/api/reports", response_model=ReportStatusResponse, status_code=status.HTTP_202_ACCEPTED)
 def create_report(
     req: CreateReportRequest, auth: AuthContext = Depends(require_auth)
-) -> ReportResponse:
-    from reporting_agent.reporter import generate_report
-    from gcp_clients import audit_dataset, audit_table, bigquery_client, firestore_client, project_id as pid, reports_table, storage_client as sc
-    from gemini_client import GeminiClient, GeminiConfigError
+) -> ReportStatusResponse:
+    """Queue a report and return its durable state. 202, not 200.
 
-    # Report generation is a Gemini call plus a BigQuery read — expensive tier.
+    Generation used to run inside this request: a Gemini call plus a BigQuery
+    read, answered 200 the moment the function returned. An instance replaced
+    mid-generation, or an upload that failed after the summary was produced,
+    both ended as "your report is ready" with nothing behind it.
+
+    Now the request only claims the report and queues the work. The status in
+    the response is the truth about storage, and only READY means downloadable.
+
+    Idempotent by construction: the report id is derived from the tenant and
+    the period, so a double-clicked button, a retried request and a redelivered
+    task all land on one record — and a report already READY is returned as-is
+    rather than regenerated, which also means it cannot be billed twice.
+    """
+    from reporting_agent.workflow import report_id_for
+
     _enforce(_expensive_limiter, auth.tenant_id, "report generation")
     if req.period_start >= req.period_end:
         raise HTTPException(
@@ -1291,43 +1421,128 @@ def create_report(
             detail="period_start must be before period_end",
         )
     g = gw()
-    try:
-        gemini = g.gemini()
-    except GeminiConfigError:
-        gemini = None
 
-    outcome = generate_report(
+    record = ReportRecord(
+        report_id=report_id_for(auth.tenant_id, req.period_start, req.period_end),
         tenant_id=auth.tenant_id,
         period_start=req.period_start,
         period_end=req.period_end,
-        db=g.db,
-        bq_client=g.bq,
-        storage_client=g.storage,
-        auditor=g.auditor,
-        gemini=gemini,
-        bq_dataset=audit_dataset(),
-        bq_reports_table=reports_table(),
-        bq_project=project_id(),
-        generated_by=auth.uid,
+        status=ReportStatus.QUEUED,
+        requested_by=auth.uid,
     )
-    s = outcome.stats
-    return ReportResponse(
-        report_id=outcome.report_id,
-        tenant_id=outcome.tenant_id,
-        period_start=outcome.period_start.isoformat(),
-        period_end=outcome.period_end.isoformat(),
-        content_ref=outcome.content_ref,
-        total_checks=s.get("total_checks", 0),
-        pass_count=s.get("auto_approved", 0),
-        fail_count=s.get("rejected", 0),
-        escalated_count=s.get("escalated", 0),
-        executive_summary=outcome.gemini_executive_summary,
-        prompt_version=outcome.prompt_version,
-        model_name=outcome.model_name,
-        model_version=outcome.model_version,
-        used_fixture=outcome.used_fixture,
-        pdf_ref=getattr(outcome, "pdf_ref", ""),
+    try:
+        record, created = g.repo.claim_report(record)
+    except TenantMismatchError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from None
+
+    # Already finished, or already being worked on by a task that is still in
+    # flight. Either way there is nothing to queue — returning the live record
+    # is what makes a refresh safe.
+    if record.status is ReportStatus.READY or (not created and record.status in _IN_FLIGHT):
+        return _report_status_response(record)
+
+    try:
+        svc = g.task_service()
+        task = svc.create_and_dispatch(
+            task_type=TaskType.REPORT, target_ref=record.report_id, tenant_id=auth.tenant_id
+        )
+    except Exception as exc:
+        logger.exception("report dispatch failed for tenant %s", auth.tenant_id)
+        g.repo.update_report_record(
+            record.report_id, auth.tenant_id,
+            {"status": ReportStatus.FAILED, "error": f"dispatch failed: {exc}"[:500]},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="reporting pipeline is temporarily unavailable",
+        ) from exc
+
+    return _report_status_response(
+        g.repo.update_report_record(record.report_id, auth.tenant_id, {"task_id": task.task_id})
     )
+
+
+@app.get("/api/reports/{report_id}/status", response_model=ReportStatusResponse)
+def get_report_status(
+    report_id: str = id_path(), auth: AuthContext = Depends(require_auth)
+) -> ReportStatusResponse:
+    """Where this report actually is. What the dashboard polls."""
+    try:
+        record = gw().repo.get_report_record(report_id, auth.tenant_id)
+    except (NotFoundError, TenantMismatchError):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from None
+    return _report_status_response(record)
+
+
+@app.get("/api/reports", response_model=list[ReportListItem])
+def list_reports(auth: AuthContext = Depends(require_auth)) -> list[ReportListItem]:
+    """Reports this workspace can actually download, newest first.
+
+    Listed from the storage bucket rather than the BigQuery reports table.
+    The table records that generation was *attempted*; the bucket records what
+    survived. Only the second is downloadable, and a list built from the first
+    would offer a download for a missing object — the "report ready, artifact
+    gone" state this must never claim.
+
+    Without this a report was reachable only from the React state of the page
+    that generated it: one reload and a tenant's own compliance evidence was
+    unreachable through the product, despite being durably stored the whole
+    time.
+
+    Scoped by a prefix built from the JWT's tenant_id, so the listing cannot
+    span tenants regardless of what the client sends.
+    """
+    from gcp_clients import reports_bucket
+
+    g = gw()
+
+    # Storage first: what demonstrably exists. This also carries the reports
+    # generated before durable records existed, which have no record to read.
+    prefix = f"{auth.tenant_id}/"
+    found: dict[str, dict] = {}
+    for blob in g.storage.list_blobs(reports_bucket(), prefix=prefix):
+        rest = blob.name[len(prefix) :]
+        report_id, _, filename = rest.partition("/")
+        if not report_id or filename not in ("report.pdf", "report.html"):
+            continue
+        entry = found.setdefault(
+            report_id,
+            {"report_id": report_id, "created_at": None, "size_bytes": 0,
+             "has_pdf": False, "has_html": False, "status": ReportStatus.READY.value},
+        )
+        if filename == "report.pdf":
+            entry["has_pdf"] = True
+        else:
+            entry["has_html"] = True
+        entry["size_bytes"] += blob.size or 0
+        updated = blob.updated.isoformat() if blob.updated else None
+        if updated and (entry["created_at"] is None or updated < entry["created_at"]):
+            entry["created_at"] = updated
+
+    # Then durable records, which add the ones still being worked on and the
+    # ones that failed — the states the storage listing cannot see because
+    # they have no object yet. A record never upgrades an entry to READY: only
+    # the presence of the artifact above does that.
+    for record in g.repo.list_report_records(auth.tenant_id):
+        entry = found.get(record.report_id)
+        if entry is None:
+            found[record.report_id] = {
+                "report_id": record.report_id,
+                "created_at": record.created_at.isoformat(),
+                "size_bytes": record.size_bytes,
+                "has_pdf": record.format == "pdf",
+                "has_html": record.format == "html",
+                "status": record.status.value,
+            }
+        elif record.status is not ReportStatus.READY:
+            # Artifact present but the record says otherwise — e.g. a crash
+            # between upload and the final write. Trust the record: it is the
+            # one that knows verification did not finish.
+            entry["status"] = record.status.value
+
+    items = [ReportListItem(**{**e, "created_at": e["created_at"] or ""}) for e in found.values()]
+    items.sort(key=lambda i: i.created_at, reverse=True)
+    return items
 
 
 @app.get("/api/reports/{report_id}")

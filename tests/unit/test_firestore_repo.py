@@ -62,9 +62,17 @@ class TestListAllTenants:
             "t-2",
         ]
 
-    def test_unknown_field_does_not_hide_the_other_tenants(self):
-        """Tenant forbids extra fields, so schema drift on one doc used to
-        raise and take the entire list with it."""
+    def test_a_tenant_written_by_a_newer_revision_is_still_returned(self):
+        """Schema drift on one doc used to raise and take the whole list with
+        it; the defence was to skip that doc. Reads are now tolerant, so the
+        drifted tenant comes back instead of being dropped.
+
+        That is the stronger property. A tenant carrying a field this revision
+        has not learned about yet is not malformed — it is newer — and quietly
+        omitting it from this list would silently exclude a paying workspace
+        from the weekly report run. Genuinely malformed records are still
+        skipped; see the test below.
+        """
         from gcp_clients.firestore_repo import FirestoreRepo
 
         drifted = _valid("t-drift") | {"field_from_a_future_version": True}
@@ -77,6 +85,7 @@ class TestListAllTenants:
         )
         assert [t.tenant_id for t in FirestoreRepo(db).list_all_tenants()] == [
             "t-1",
+            "t-drift",
             "t-2",
         ]
 

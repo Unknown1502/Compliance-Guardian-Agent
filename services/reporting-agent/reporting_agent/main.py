@@ -38,9 +38,14 @@ from gcp_clients import (
 from gcp_clients.firestore_repo import FirestoreRepo
 from gemini_client import GeminiClient, GeminiConfigError
 from pydantic import BaseModel, Field
-from schema_validators import EntitlementSource, TenantStatus
+from schema_validators import EntitlementSource, ReportRecord, ReportStatus, TenantStatus
 
 from reporting_agent.reporter import generate_report
+from reporting_agent.workflow import (
+    ReportGenerationError,
+    report_id_for,
+    run_report_workflow,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("cg.reporting.api")
@@ -95,6 +100,54 @@ class ReportResponse(BaseModel):
     used_fixture: bool
 
 
+class DurableReportResponse(BaseModel):
+    """What is actually true of this report right now.
+
+    `status` is the contract: only READY means an artifact exists and has been
+    read back. storage_key is deliberately absent — a client never needs the
+    bucket path, and the download endpoint builds its own from the caller's
+    verified tenant claim.
+    """
+
+    report_id: str
+    tenant_id: str
+    status: str
+    period_start: str
+    period_end: str
+    format: str
+    size_bytes: int
+    checksum: str
+    total_checks: int
+    pass_count: int
+    fail_count: int
+    escalated_count: int
+    executive_summary: str
+    model_name: str
+    used_fixture: bool
+    attempts: int
+
+
+def _to_response(r: ReportRecord) -> "DurableReportResponse":
+    return DurableReportResponse(
+        report_id=r.report_id,
+        tenant_id=r.tenant_id,
+        status=r.status.value,
+        period_start=r.period_start.isoformat(),
+        period_end=r.period_end.isoformat(),
+        format=r.format,
+        size_bytes=r.size_bytes,
+        checksum=r.checksum,
+        total_checks=r.total_checks,
+        pass_count=r.pass_count,
+        fail_count=r.fail_count,
+        escalated_count=r.escalated_count,
+        executive_summary=r.executive_summary,
+        model_name=r.model_name,
+        used_fixture=r.used_fixture,
+        attempts=r.attempts,
+    )
+
+
 class ReportTenantsResponse(BaseModel):
     tenant_ids: list[str]
 
@@ -137,10 +190,22 @@ def list_report_tenants(
     )
 
 
-@app.post("/internal/report", response_model=ReportResponse)
+@app.post("/internal/report", response_model=DurableReportResponse)
 def create_report(
     req: ReportRequest, x_internal_token: str | None = Header(default=None)
-) -> ReportResponse:
+) -> DurableReportResponse:
+    """Generate one report through the durable lifecycle.
+
+    Drives the state machine rather than generating inline, so the response
+    describes what is actually true of storage. The scheduled weekly workflow
+    calls this with the same body it always has and now gets the same
+    guarantees — previously a failed weekly run left no record it had been
+    attempted.
+
+    A report already READY is returned untouched, so Cloud Task redelivery and
+    a re-run of the weekly workflow are both no-ops rather than a second
+    Gemini call.
+    """
     _check_internal_token(x_internal_token)
     if req.period_start >= req.period_end:
         raise HTTPException(
@@ -148,37 +213,129 @@ def create_report(
             detail="period_start must be before period_end",
         )
     deps = _deps()
-    outcome = generate_report(
+    repo = deps["repo"]
+
+    record = ReportRecord(
+        report_id=report_id_for(req.tenant_id, req.period_start, req.period_end),
         tenant_id=req.tenant_id,
         period_start=req.period_start,
         period_end=req.period_end,
-        db=deps["db"],
-        bq_client=deps["bq"],
-        storage_client=deps["storage"],
-        auditor=deps["auditor"],
-        gemini=deps["gemini"],
-        bq_dataset=audit_dataset(),
-        bq_reports_table=reports_table(),
-        bq_project=project_id(),
-        generated_by=req.generated_by,
+        status=ReportStatus.QUEUED,
+        requested_by=req.generated_by,
     )
-    s = outcome.stats
-    return ReportResponse(
-        report_id=outcome.report_id,
-        tenant_id=outcome.tenant_id,
-        period_start=outcome.period_start.isoformat(),
-        period_end=outcome.period_end.isoformat(),
-        content_ref=outcome.content_ref,
-        total_checks=s.get("total_checks", 0),
-        pass_count=s.get("auto_approved", 0),
-        fail_count=s.get("rejected", 0),
-        escalated_count=s.get("escalated", 0),
-        executive_summary=outcome.gemini_executive_summary,
-        prompt_version=outcome.prompt_version,
-        model_name=outcome.model_name,
-        model_version=outcome.model_version,
-        used_fixture=outcome.used_fixture,
-    )
+    # Whoever wins this is the one that generates; everyone else resumes the
+    # record that already exists.
+    record, _created = repo.claim_report(record)
+
+    def _generate():
+        return generate_report(
+            tenant_id=req.tenant_id,
+            period_start=req.period_start,
+            period_end=req.period_end,
+            db=deps["db"],
+            bq_client=deps["bq"],
+            storage_client=deps["storage"],
+            auditor=deps["auditor"],
+            gemini=deps["gemini"],
+            bq_dataset=audit_dataset(),
+            bq_reports_table=reports_table(),
+            bq_project=project_id(),
+            generated_by=req.generated_by,
+            report_id=record.report_id,
+        )
+
+    try:
+        final = run_report_workflow(
+            record=record,
+            repo=repo,
+            generate=_generate,
+            storage_client=deps["storage"],
+        )
+    except ReportGenerationError as exc:
+        # 502 so Cloud Tasks retries per the queue policy. The durable record
+        # already says RETRYING or FAILED, so the state is not lost with the
+        # response.
+        logger.error("report %s did not complete: %s", record.report_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="report generation failed"
+        ) from exc
+
+    return _to_response(final)
+
+
+class ReportTaskRequest(BaseModel):
+    """Cloud Tasks payload. The queue carries an id, not a period."""
+
+    tenant_id: str = Field(min_length=1)
+    # The dispatcher names it target_ref; document_id is the same value and is
+    # sent alongside for the other agents. Either is accepted so the worker
+    # does not depend on which field the dispatcher happens to fill.
+    target_ref: str = Field(default="", max_length=128)
+    document_id: str = Field(default="", max_length=128)
+    task_id: str = Field(default="", max_length=128)
+
+    @property
+    def report_id(self) -> str:
+        return self.target_ref or self.document_id
+
+
+@app.post("/internal/report-task", response_model=DurableReportResponse)
+def run_report_task(
+    req: ReportTaskRequest, x_internal_token: str | None = Header(default=None)
+) -> DurableReportResponse:
+    """Cloud Tasks entry point: finish the report this id names.
+
+    The period is read from the durable record rather than the payload, so a
+    replayed task cannot generate a different period under an id that already
+    means something. A record already READY returns immediately, which is what
+    makes redelivery free.
+    """
+    _check_internal_token(x_internal_token)
+    if not req.report_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="report id missing from task payload"
+        )
+    deps = _deps()
+    repo = deps["repo"]
+
+    try:
+        record = repo.get_report_record(req.report_id, req.tenant_id)
+    except Exception as exc:
+        # Includes the tenant-mismatch case, which is a 404 for the same
+        # reason it is everywhere else: existence is not disclosed.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="report not found"
+        ) from exc
+
+    def _generate():
+        return generate_report(
+            tenant_id=record.tenant_id,
+            period_start=record.period_start,
+            period_end=record.period_end,
+            db=deps["db"],
+            bq_client=deps["bq"],
+            storage_client=deps["storage"],
+            auditor=deps["auditor"],
+            gemini=deps["gemini"],
+            bq_dataset=audit_dataset(),
+            bq_reports_table=reports_table(),
+            bq_project=project_id(),
+            generated_by=record.requested_by or "reporting-agent",
+            report_id=record.report_id,
+        )
+
+    try:
+        final = run_report_workflow(
+            record=record, repo=repo, generate=_generate, storage_client=deps["storage"]
+        )
+    except ReportGenerationError as exc:
+        logger.error("report task %s did not complete: %s", req.report_id, exc)
+        # 502 so Cloud Tasks retries. The durable record already records why.
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="report generation failed"
+        ) from exc
+
+    return _to_response(final)
 
 
 @app.get("/reports/{report_id}/html", response_class=HTMLResponse)

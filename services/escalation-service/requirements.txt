@@ -3,6 +3,10 @@ fastapi>=0.111,<1
 uvicorn[standard]>=0.30,<1
 google-cloud-firestore>=2.16,<3
 google-cloud-bigquery>=3.25,<4
+# gcp_clients imports storage at module level, so importing it at all requires
+# this. It has only ever resolved because firebase-admin happens to depend on
+# it — declared explicitly so the container does not break if that changes.
+google-cloud-storage>=2.16,<3
 firebase-admin>=6.5,<7
 pydantic>=2.7,<3
 PyYAML>=6.0,<7

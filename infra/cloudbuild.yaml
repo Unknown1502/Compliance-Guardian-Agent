@@ -1,4 +1,4 @@
-# Builds and pushes all 5 service images from repo root context.
+# Builds and pushes all 6 service images from repo root context.
 #
 # Why this exists: `terraform apply` only changes Cloud Run *config* (env
 # vars, IAM, resource shape) — it never rebuilds the container image. Every
@@ -26,6 +26,21 @@ steps:
     args: [build, -f, services/escalation-service/Dockerfile, -t, us-central1-docker.pkg.dev/cg-guardian-9856/cg-services/escalation-service:latest, .]
   - name: gcr.io/cloud-builders/docker
     args: [build, -f, services/reporting-agent/Dockerfile, -t, us-central1-docker.pkg.dev/cg-guardian-9856/cg-services/reporting-agent:latest, .]
+  # cg-orchestrator is declared in Terraform and deployed, but its image was
+  # never built here — so the service has never had a ready revision, since
+  # creation. Nothing calls its HTTP API (the gateway and scanner import
+  # TaskService from this package as a library instead), so the product was
+  # unaffected; it just sat permanently failing and polluting service health.
+  - name: gcr.io/cloud-builders/docker
+    args: [build, -f, services/orchestrator/Dockerfile, -t, us-central1-docker.pkg.dev/cg-guardian-9856/cg-services/orchestrator:latest, .]
+  - name: gcr.io/cloud-builders/docker
+    args: [build, -f, services/audit-writer/Dockerfile, -t, us-central1-docker.pkg.dev/cg-guardian-9856/cg-services/audit-writer:latest, .]
+  # Slowest step by far: installs ClamAV and downloads ~350 MB of signatures at
+  # build time so the container does not have to on every cold start. Rebuild
+  # this image on a schedule even when no code changed — the signatures baked
+  # in are only as fresh as the last build.
+  - name: gcr.io/cloud-builders/docker
+    args: [build, -f, services/scanner-agent/Dockerfile, -t, us-central1-docker.pkg.dev/cg-guardian-9856/cg-services/scanner-agent:latest, .]
 
 images:
   - us-central1-docker.pkg.dev/cg-guardian-9856/cg-services/api-gateway:latest
@@ -33,8 +48,16 @@ images:
   - us-central1-docker.pkg.dev/cg-guardian-9856/cg-services/ingestion-agent:latest
   - us-central1-docker.pkg.dev/cg-guardian-9856/cg-services/escalation-service:latest
   - us-central1-docker.pkg.dev/cg-guardian-9856/cg-services/reporting-agent:latest
+  # A build step alone does not publish anything — only what is listed here is
+  # pushed. Omitting an image here builds it and silently throws it away, which
+  # is why cg-orchestrator could reference a tag that never existed.
+  - us-central1-docker.pkg.dev/cg-guardian-9856/cg-services/orchestrator:latest
+  - us-central1-docker.pkg.dev/cg-guardian-9856/cg-services/audit-writer:latest
+  - us-central1-docker.pkg.dev/cg-guardian-9856/cg-services/scanner-agent:latest
 
 options:
   machineType: E2_HIGHCPU_8
 
-timeout: 1200s
+# Raised from 1200s: the scanner image installs ClamAV and pulls the signature
+# database, which alone runs several minutes.
+timeout: 2400s

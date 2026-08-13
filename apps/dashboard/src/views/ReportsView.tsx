@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   FileBarChart2,
@@ -12,50 +12,33 @@ import {
 } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { useToast } from "../context/ToastContext";
-import { ApiError } from "../api/client";
+import {
+  ApiError,
+  createReport,
+  getReportState,
+  listReports,
+  type ReportListItem,
+  type ReportState,
+} from "../api/client";
 import { API_BASE_URL } from "../config";
 import { Card, CardHeader, PageHeading } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { StatCard } from "../components/ui/StatCard";
 import { DecisionBreakdown } from "../components/ui/DecisionBreakdown";
 
-interface ReportSummary {
-  report_id: string;
-  period_start: string;
-  period_end: string;
-  total_checks: number;
-  pass_count: number;
-  fail_count: number;
-  escalated_count: number;
-  executive_summary: string;
-  model_name: string;
-  used_fixture: boolean;
-  content_ref: string;
-}
+/** What each durable state means to someone watching the page. */
+const STATE_LABEL: Record<string, string> = {
+  queued: "Queued…",
+  generating: "Generating…",
+  validating: "Validating…",
+  persisting: "Saving…",
+  verifying: "Verifying…",
+  ready: "Ready",
+  failed: "Generation failed",
+  retrying: "Retrying…",
+};
 
-async function postReport(
-  session: import("../types").Session,
-  periodStart: string,
-  periodEnd: string,
-): Promise<ReportSummary> {
-  const token = await session.getToken();
-  const res = await fetch(`${API_BASE_URL}/api/reports`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      period_start: new Date(periodStart).toISOString(),
-      period_end: new Date(periodEnd).toISOString(),
-    }),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new ApiError(res.status, body.detail ?? res.statusText);
-  }
-  return res.json();
-}
+const TERMINAL = new Set(["ready", "failed"]);
 
 export function ReportsView() {
   const { session } = useAuth();
@@ -67,8 +50,24 @@ export function ReportsView() {
   const [end, setEnd] = useState(today);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [report, setReport] = useState<ReportSummary | null>(null);
+  const [report, setReport] = useState<ReportState | null>(null);
   const [openingId, setOpeningId] = useState<string | null>(null);
+  const [past, setPast] = useState<ReportListItem[] | null>(null);
+
+  // The generated report used to live only in the state above, so a reload
+  // put a workspace's own compliance evidence out of reach.
+  const refreshPast = useCallback(async () => {
+    if (!session) return;
+    try {
+      setPast(await listReports(session));
+    } catch {
+      setPast([]);
+    }
+  }, [session]);
+
+  useEffect(() => {
+    refreshPast();
+  }, [refreshPast]);
 
   // The report endpoint requires a bearer token, so a plain <a href> would
   // navigate without one and render the API's "Missing bearer token" error.
@@ -114,22 +113,54 @@ export function ReportsView() {
     }
   };
 
+  /**
+   * Queue the report, then follow its durable state until it settles.
+   *
+   * The status shown is whatever the server says it is — there is no local
+   * progress animation, because a progress bar disconnected from the backend
+   * is how "your report is ready" came to mean nothing. Leaving the page is
+   * safe: the work continues in a worker and the report appears in the list
+   * below on the next visit.
+   */
   const generate = async () => {
     if (!session) return;
     setBusy(true);
     setError(null);
     try {
-      const r = await postReport(session, start, end);
-      setReport(r);
-      toast.push({
-        kind: "success",
-        title: "Report generated",
-        description: `${r.total_checks} checks reviewed for the selected period.`,
-      });
+      let state = await createReport(session, start, end);
+      setReport(state);
+
+      const startedAt = Date.now();
+      while (!TERMINAL.has(state.status)) {
+        // Two minutes is well past a normal run; past that the report is not
+        // lost, it is just no longer worth holding the page open for.
+        if (Date.now() - startedAt > 120_000) break;
+        await new Promise((r) => setTimeout(r, 2_000));
+        state = await getReportState(session, state.report_id);
+        setReport(state);
+      }
+      await refreshPast();
+
+      if (state.status === "ready") {
+        toast.push({
+          kind: "success",
+          title: "Report ready",
+          description: `${state.total_checks} checks reviewed for the selected period.`,
+        });
+      } else if (state.status === "failed") {
+        setError(state.error || "Report generation failed.");
+        toast.push({ kind: "error", title: "Report generation failed" });
+      } else {
+        toast.push({
+          kind: "warning",
+          title: "Still generating",
+          description: "It will appear below once it finishes.",
+        });
+      }
     } catch (err) {
       const msg = (err as Error).message;
       setError(msg);
-      toast.push({ kind: "error", title: "Report generation failed", description: msg });
+      toast.push({ kind: "error", title: "Could not queue the report", description: msg });
     } finally {
       setBusy(false);
     }
@@ -192,14 +223,32 @@ export function ReportsView() {
             <Card>
               <CardHeader
                 title={`${report.period_start.split("T")[0]} – ${report.period_end.split("T")[0]}`}
-                subtitle={<span className="font-mono-num">{report.report_id}</span>}
+                subtitle={
+                  <span className="flex items-center gap-2">
+                    <span className="font-mono-num">{report.report_id}</span>
+                    <span
+                      className={
+                        report.downloadable
+                          ? "rounded bg-status-good/10 px-1.5 py-0.5 text-[11px] font-medium text-status-good"
+                          : report.status === "failed"
+                            ? "rounded bg-status-critical/10 px-1.5 py-0.5 text-[11px] font-medium text-status-critical"
+                            : "rounded bg-surface-2 px-1.5 py-0.5 text-[11px] font-medium text-ink-2"
+                      }
+                    >
+                      {STATE_LABEL[report.status] ?? report.status}
+                    </span>
+                  </span>
+                }
                 action={
                   <div className="flex items-center gap-3">
+                    {/* Download is offered only once the server has verified
+                        the artifact — downloadable is computed there, not from
+                        a status string compared here. */}
                     <button
                       type="button"
                       onClick={() => openReport(report.report_id, true)}
-                      disabled={openingId === report.report_id}
-                      className="inline-flex items-center gap-1 text-sm font-medium text-slate-600 transition-colors hover:text-slate-900 disabled:opacity-50 dark:text-slate-400 dark:hover:text-slate-100"
+                      disabled={openingId === report.report_id || !report.downloadable}
+                      className="inline-flex items-center gap-1 text-sm font-medium text-slate-600 transition-colors hover:text-slate-900 disabled:opacity-40 dark:text-slate-400 dark:hover:text-slate-100"
                     >
                       Download
                       <Download size={13} />
@@ -250,6 +299,59 @@ export function ReportsView() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      <Card>
+        <CardHeader
+          title="Previous reports"
+          subtitle="Every report still held in storage for this workspace."
+        />
+        {past === null ? (
+          <p className="text-sm text-slate-500">Loading…</p>
+        ) : past.length === 0 ? (
+          <p className="text-sm text-slate-500">
+            No reports yet. Generate one above and it will stay available here.
+          </p>
+        ) : (
+          <ul className="divide-y divide-line">
+            {past.map((r) => (
+              <li key={r.report_id} className="flex flex-wrap items-center gap-3 py-3">
+                <div className="min-w-0 flex-1">
+                  <p className="font-mono-num truncate text-[12.5px] text-ink">{r.report_id}</p>
+                  <p className="text-[12px] text-ink-2">
+                    {r.created_at ? new Date(r.created_at).toLocaleString() : "—"}
+                    {" · "}
+                    {r.status === "ready"
+                      ? r.has_pdf
+                        ? "PDF"
+                        : "HTML only"
+                      : (STATE_LABEL[r.status] ?? r.status)}
+                  </p>
+                </div>
+                {/* An unfinished report has nothing to fetch, so it offers no
+                    buttons rather than buttons that 404. */}
+                <button
+                  type="button"
+                  onClick={() => openReport(r.report_id, true)}
+                  disabled={openingId === r.report_id || r.status !== "ready"}
+                  className="inline-flex items-center gap-1 text-sm font-medium text-slate-600 transition-colors hover:text-slate-900 disabled:opacity-40 dark:text-slate-400 dark:hover:text-slate-100"
+                >
+                  Download
+                  <Download size={13} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openReport(r.report_id)}
+                  disabled={openingId === r.report_id || r.status !== "ready"}
+                  className="inline-flex items-center gap-1 text-sm font-medium text-brand-600 transition-colors hover:text-brand-700 disabled:opacity-40 dark:text-brand-400"
+                >
+                  {openingId === r.report_id ? "Opening…" : "Open"}
+                  <ExternalLink size={13} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
     </div>
   );
 }
