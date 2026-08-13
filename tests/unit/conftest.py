@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from gemini_client import GeminiResult
-from schema_validators import Document, DocumentStatus, Tenant
+from schema_validators import Document, DocumentStatus, ScanStatus, Tenant
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 RULESETS_ROOT = str(REPO_ROOT / "rulesets")
@@ -186,6 +186,14 @@ def ndis_tenant() -> Tenant:
 
 @pytest.fixture()
 def ndis_document() -> Document:
+    """A document as it reaches ingestion — which now means malware-cleared.
+
+    scan_status is explicit rather than defaulted: the model defaults to
+    UNSCANNED so untrusted bytes fail closed, and ingestion refuses anything
+    that is not CLEAN. A fixture that relied on the default would be asserting
+    behaviour that cannot occur in production. Tests that exercise the trust
+    boundary itself live in test_scan_enforcement.py.
+    """
     return Document(
         document_id="doc-ndis-1",
         tenant_id="tenant-sunrise-care",
@@ -193,4 +201,5 @@ def ndis_document() -> Document:
         storage_ref="gs://cg-local-cg-raw-docs/tenant-sunrise-care/doc-ndis-1/record.txt",
         extracted_fields={},
         status=DocumentStatus.PENDING,
+        scan_status=ScanStatus.CLEAN,
     )

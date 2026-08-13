@@ -8,12 +8,22 @@ terraform {
     }
   }
 
-  # Remote state for team use — uncomment and set a real bucket before shared
-  # environments. Local state is acceptable for the sandbox project.
-  # backend "gcs" {
-  #   bucket = "REPLACE-tfstate-bucket"
-  #   prefix = "compliance-guardian"
-  # }
+  # State lives in GCS, not on a workstation.
+  #
+  # This project is no longer a sandbox: the state describes the live
+  # infrastructure serving customers, and a single local copy meant one disk
+  # failure would leave Terraform unable to see, change or roll back anything
+  # it had built. The bucket is versioned, so a corrupted or truncated state
+  # can be restored from a prior generation, and GCS provides the object
+  # locking that stops two concurrent applies interleaving.
+  #
+  # The bucket is deliberately NOT declared as a resource in this
+  # configuration — Terraform cannot create the thing it stores its own state
+  # in without a chicken-and-egg on first init.
+  backend "gcs" {
+    bucket = "cg-guardian-9856-tfstate"
+    prefix = "compliance-guardian"
+  }
 }
 
 provider "google" {

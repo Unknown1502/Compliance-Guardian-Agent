@@ -38,6 +38,31 @@ resource "google_cloud_run_v2_service" "api_gateway" {
         value = "${google_cloud_run_v2_service.compliance_agent.uri}/internal/check"
       }
       env {
+        # Uploads dispatch a scan, never an ingest. If this is unset the
+        # dispatcher raises rather than falling back to ingestion, so a
+        # misconfiguration fails the upload instead of skipping the scan.
+        name  = "SCANNER_URL"
+        value = "${google_cloud_run_v2_service.scanner_agent.uri}/internal/scan"
+      }
+      env {
+        name  = "GCS_BUCKET_QUARANTINE"
+        value = google_storage_bucket.quarantine.name
+      }
+      env {
+        # Report generation is queued, not run inside the request. Points at
+        # the task entry point, which reads the period from the durable record
+        # rather than the payload.
+        name  = "REPORTING_URL"
+        value = "${google_cloud_run_v2_service.reporting_agent.uri}/internal/report-task"
+      }
+      env {
+        # The gateway can no longer write audit rows itself — its service
+        # account has no append permission on the audit dataset. Unset, it
+        # falls back to a direct BigQuery insert, which would now be denied.
+        name  = "AUDIT_WRITER_URL"
+        value = google_cloud_run_v2_service.audit_writer.uri
+      }
+      env {
         name  = "INVOKER_SA"
         value = google_service_account.cg_runtime.email
       }
@@ -277,6 +302,132 @@ resource "google_cloud_run_v2_service_iam_member" "ingestion_invoker" {
   name     = google_cloud_run_v2_service.ingestion_agent.name
   role     = "roles/run.invoker"
   member   = "serviceAccount:${google_service_account.cg_runtime.email}"
+}
+
+# ---------------------------------------------------------------------------
+# Audit Writer — holds the BigQuery append permission that the gateway must
+# not have, so that no single identity can both append to and rewrite the
+# audit trail. See the comment on gateway_appender in iam.tf.
+# ---------------------------------------------------------------------------
+
+resource "google_cloud_run_v2_service" "audit_writer" {
+  name     = "cg-audit-writer"
+  location = var.region
+
+  template {
+    service_account = google_service_account.cg_audit_writer.email
+
+    containers {
+      image = "${local.service_image}/audit-writer:latest"
+
+      env {
+        name  = "GOOGLE_CLOUD_PROJECT"
+        value = var.project_id
+      }
+      env {
+        name  = "BQ_DATASET_AUDIT"
+        value = google_bigquery_dataset.audit.dataset_id
+      }
+    }
+
+    # Every audited action in the gateway waits on this, so a cold start would
+    # add latency to uploads, signups and reviewer decisions alike.
+    scaling {
+      min_instance_count = 1
+      max_instance_count = 10
+    }
+  }
+
+  depends_on = [google_project_service.apis, google_artifact_registry_repository.cg_services]
+}
+
+# ---------------------------------------------------------------------------
+# Scanner Agent — ClamAV. Runs as cg_scanner, not cg_runtime: it is the only
+# identity permitted to read quarantined uploads, and that separation is the
+# malware trust boundary.
+# ---------------------------------------------------------------------------
+
+resource "google_cloud_run_v2_service" "scanner_agent" {
+  name     = "cg-scanner-agent"
+  location = var.region
+
+  template {
+    service_account = google_service_account.cg_scanner.email
+
+    # clamd holds the whole signature database in memory (~1.3 GB) and is
+    # killed outright if it cannot. 2 GB is the smallest size that leaves room
+    # for the database plus the file being scanned.
+    containers {
+      image = "${local.service_image}/scanner-agent:latest"
+
+      resources {
+        limits = {
+          cpu    = "2"
+          memory = "2Gi"
+        }
+        # clamd keeps working between requests loading signatures; throttling
+        # CPU outside a request would make startup take minutes.
+        cpu_idle = false
+      }
+
+      # Loading signatures takes ~30-60s. Without a generous startup probe
+      # Cloud Run kills the container before clamd is ready and retries
+      # forever.
+      startup_probe {
+        tcp_socket {
+          port = 8080
+        }
+        initial_delay_seconds = 20
+        period_seconds        = 10
+        failure_threshold     = 12
+        timeout_seconds       = 5
+      }
+
+      env {
+        name  = "GOOGLE_CLOUD_PROJECT"
+        value = var.project_id
+      }
+      env {
+        name  = "GCS_BUCKET_QUARANTINE"
+        value = google_storage_bucket.quarantine.name
+      }
+      env {
+        name  = "GCS_BUCKET_RAW_DOCS"
+        value = google_storage_bucket.raw_docs.name
+      }
+      env {
+        name  = "INGESTION_URL"
+        value = "${google_cloud_run_v2_service.ingestion_agent.uri}/internal/ingest"
+      }
+      env {
+        name  = "CLOUD_TASKS_QUEUE"
+        value = google_cloud_tasks_queue.agent_queue.name
+      }
+      env {
+        name  = "CLOUD_TASKS_LOCATION"
+        value = var.region
+      }
+      env {
+        name  = "INVOKER_SA"
+        value = google_service_account.cg_runtime.email
+      }
+    }
+
+    # min_instance_count = 1: a cold start here means loading the signature
+    # database before the first scan can run, which would push every upload
+    # after an idle period past the Cloud Tasks timeout. This is the one
+    # service in the system that cannot afford to scale to zero.
+    scaling {
+      min_instance_count = 1
+      max_instance_count = 5
+    }
+
+    # A large PDF through a full signature set is slow; the default 5 minutes
+    # is not always enough.
+    timeout = "600s"
+  }
+
+  depends_on = [google_project_service.apis, google_artifact_registry_repository.cg_services]
 }
 
 # ---------------------------------------------------------------------------

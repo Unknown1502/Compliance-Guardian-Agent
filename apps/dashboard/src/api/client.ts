@@ -347,6 +347,81 @@ export async function capturePayPalOrder(
   return jsonOrThrow(res);
 }
 
+export interface ReportListItem {
+  report_id: string;
+  created_at: string;
+  size_bytes: number;
+  has_pdf: boolean;
+  has_html: boolean;
+  status: string;
+}
+
+/** Durable lifecycle state. Only "ready" means an artifact has been verified. */
+export type ReportStatus =
+  | "queued"
+  | "generating"
+  | "validating"
+  | "persisting"
+  | "verifying"
+  | "ready"
+  | "failed"
+  | "retrying";
+
+export interface ReportState {
+  report_id: string;
+  status: ReportStatus;
+  period_start: string;
+  period_end: string;
+  /** Derived server-side so the client cannot get the rule wrong. */
+  downloadable: boolean;
+  format: string;
+  size_bytes: number;
+  total_checks: number;
+  pass_count: number;
+  fail_count: number;
+  escalated_count: number;
+  executive_summary: string;
+  model_name: string;
+  used_fixture: boolean;
+  attempts: number;
+  error: string;
+  created_at: string;
+}
+
+/**
+ * Queue a report. Returns immediately with durable state — generation happens
+ * in a worker, so this no longer blocks on a Gemini call that could outlive
+ * the request.
+ */
+export async function createReport(
+  session: Session,
+  periodStart: string,
+  periodEnd: string,
+): Promise<ReportState> {
+  return jsonOrThrow(
+    await authedFetch(session, "/api/reports", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        period_start: new Date(periodStart).toISOString(),
+        period_end: new Date(periodEnd).toISOString(),
+      }),
+    }),
+  );
+}
+
+export async function getReportState(
+  session: Session,
+  reportId: string,
+): Promise<ReportState> {
+  return jsonOrThrow(await authedFetch(session, `/api/reports/${reportId}/status`));
+}
+
+/** Past reports that still have a downloadable artifact in storage. */
+export async function listReports(session: Session): Promise<ReportListItem[]> {
+  return jsonOrThrow(await authedFetch(session, "/api/reports"));
+}
+
 export async function getAuditLogs(
   session: Session,
 ): Promise<{ events: import("../types").AuditEvent[]; count: number }> {

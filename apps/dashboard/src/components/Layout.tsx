@@ -20,13 +20,23 @@ import {
   LifeBuoy,
   PanelLeftClose,
   PanelLeftOpen,
+  type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { PageTransition } from "./ui/PageTransition";
 import { VerifyEmailBanner } from "./VerifyEmailBanner";
 import { cn } from "../lib/cn";
 
-const GROUPS = [
+interface NavItem {
+  to: string;
+  label: string;
+  icon: LucideIcon;
+  end?: boolean;
+  /** Absent means every role sees it. */
+  roles?: string[];
+}
+
+const GROUPS: { label: string; items: NavItem[] }[] = [
   {
     label: "Compliance",
     items: [
@@ -38,7 +48,7 @@ const GROUPS = [
   {
     label: "Records",
     items: [
-      { to: "/audit", label: "Audit log", icon: ScrollText },
+      { to: "/audit", label: "Audit log", icon: ScrollText, roles: ["owner", "admin"] },
       { to: "/reports", label: "Reports", icon: FileBarChart2 },
       { to: "/trends", label: "Trends", icon: TrendingUp },
     ],
@@ -109,9 +119,18 @@ function NavItems({
   collapsed?: boolean;
 }) {
   const location = useLocation();
+  const { session } = useAuth();
+  // Cosmetic only — the gateway enforces the same rule and is the control that
+  // matters. This just stops showing a reviewer a link that would 403.
+  const groups = GROUPS.map((group) => ({
+    ...group,
+    items: group.items.filter(
+      (item) => !item.roles || item.roles.includes(session?.role ?? ""),
+    ),
+  })).filter((group) => group.items.length > 0);
   return (
     <>
-      {GROUPS.map((group) => (
+      {groups.map((group) => (
         <div key={group.label} className="mb-6">
           {/* Collapsed, the group heading is replaced by a hairline: the rail
               is too narrow for the label, but losing the grouping entirely

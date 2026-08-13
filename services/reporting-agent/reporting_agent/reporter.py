@@ -213,9 +213,17 @@ def generate_report(
     bq_reports_table: str,
     bq_project: str,
     generated_by: str = "reporting-agent",
+    report_id: str | None = None,
 ) -> ReportOutcome:
-    """Generate one compliance report for a tenant. Writes HTML to GCS + row to BigQuery."""
-    report_id = str(uuid.uuid4())
+    """Generate one compliance report for a tenant. Writes HTML to GCS + row to BigQuery.
+
+    report_id is supplied by the durable workflow, which derives it from the
+    tenant and period so the same request is always the same report. Minting a
+    uuid4 here — as this used to — meant every retry produced a second report,
+    a second stored object and a second BigQuery row for work asked for once.
+    The fallback remains for direct callers outside the workflow.
+    """
+    report_id = report_id or str(uuid.uuid4())
     used_fixture = False
     model_name = "fixture"
     model_version = None

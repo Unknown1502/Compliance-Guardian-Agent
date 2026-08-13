@@ -132,3 +132,100 @@ class AuditLogger:
 
         logger.error("audit insert FAILED after %d attempts: %s", self._max_attempts, last_errors)
         raise AuditWriteError(f"failed to write audit event {row.event_id}: {last_errors}")
+
+
+class RemoteAuditLogger:
+    """Writes audit events through the audit-writer service instead of directly.
+
+    Exists to break an IAM combination, not for any application reason. A
+    streaming insert needs `bigquery.tables.updateData`; a DML statement needs
+    that same permission plus `bigquery.jobs.create`. The gateway must keep
+    jobs.create — six read paths depend on it, including /api/audit-logs and
+    the platform console — so the only way it can be made incapable of
+    rewriting history is to take the append permission away from it entirely.
+
+    Appends therefore go to cg-audit-writer, whose service account holds the
+    appender role and NOT jobs.create. Neither identity can mutate the trail:
+    the gateway lacks updateData, the writer lacks jobs.create.
+
+    Same signature as AuditLogger.log(), so no call site changes. The
+    deterministic event_id is still computed here rather than server-side, so
+    a Cloud Task replay dedupes exactly as before — the id must be a function
+    of the event, never of the request that carried it.
+    """
+
+    def __init__(self, url: str, *, timeout: float = 10.0, max_attempts: int = 3) -> None:
+        self._url = url.rstrip("/")
+        self._timeout = timeout
+        self._max_attempts = max_attempts
+
+    def _id_token(self) -> str:
+        """OIDC token for the writer's audience — Cloud Run IAM is the gate."""
+        import google.auth.transport.requests
+        import google.oauth2.id_token
+
+        return google.oauth2.id_token.fetch_id_token(
+            google.auth.transport.requests.Request(), self._url
+        )
+
+    def log(
+        self,
+        *,
+        tenant_id: str,
+        actor: str,
+        action: str,
+        dedup_key: str,
+        before_state: dict[str, Any] | None = None,
+        after_state: dict[str, Any] | None = None,
+        created_at: datetime | None = None,
+    ) -> AuditLogRow:
+        import urllib.error
+        import urllib.request
+
+        row = AuditLogRow(
+            event_id=deterministic_event_id(tenant_id, actor, action, dedup_key),
+            tenant_id=tenant_id,
+            actor=actor,
+            action=action,
+            before_state=before_state,
+            after_state=after_state,
+            **({"created_at": created_at} if created_at is not None else {}),
+        )
+        body = json.dumps(
+            {
+                "event_id": row.event_id,
+                "tenant_id": row.tenant_id,
+                "actor": row.actor,
+                "action": row.action,
+                "before_state": _json_safe(row.before_state),
+                "after_state": _json_safe(row.after_state),
+                "created_at": row.created_at.isoformat(),
+            }
+        ).encode()
+
+        last: Any = None
+        for attempt in range(1, self._max_attempts + 1):
+            try:
+                req = urllib.request.Request(
+                    f"{self._url}/internal/audit",
+                    data=body,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {self._id_token()}",
+                    },
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+                    if 200 <= resp.status < 300:
+                        return row
+                    last = f"HTTP {resp.status}"
+            except Exception as exc:  # noqa: BLE001 - network, auth, or 5xx
+                last = exc
+            logger.warning(
+                "remote audit attempt %d/%d failed: %s", attempt, self._max_attempts, last
+            )
+
+        # Same contract as AuditLogger: loud, and surfaced to the caller. An
+        # audit event that cannot be written is never silently dropped.
+        logger.error("remote audit FAILED after %d attempts: %s", self._max_attempts, last)
+        raise AuditWriteError(f"failed to write audit event {row.event_id}: {last}")

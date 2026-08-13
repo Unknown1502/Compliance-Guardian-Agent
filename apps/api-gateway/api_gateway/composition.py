@@ -13,7 +13,7 @@ import os
 
 import time
 
-from audit_logger import AuditLogger
+from audit_logger import AuditLogger, RemoteAuditLogger
 from auth_middleware import (
     SERVICE_ROLE,
     AuthContext,
@@ -27,6 +27,7 @@ from gcp_clients import (
     audit_table,
     bigquery_client,
     firestore_client,
+    quarantine_bucket,
     raw_docs_bucket,
     storage_client,
 )
@@ -40,6 +41,8 @@ ESCALATION_THRESHOLD = int(os.environ.get("RISK_ESCALATION_THRESHOLD", "60"))
 DISPATCH_MODE = os.environ.get("CG_DISPATCH_MODE", "inline")  # inline | cloud
 # Used to build the "Review" deep link in Slack escalation alerts.
 DASHBOARD_BASE_URL = os.environ.get("CG_DASHBOARD_BASE_URL", "")
+# Set in production. Unset locally, where the gateway writes audit rows itself.
+AUDIT_WRITER_URL = os.environ.get("AUDIT_WRITER_URL", "")
 
 
 class Gateway:
@@ -48,7 +51,20 @@ class Gateway:
         self.repo = FirestoreRepo(self.db)
         self.storage = storage_client()
         self.bq = bigquery_client()
-        self.auditor = AuditLogger(self.bq, audit_dataset(), audit_table())
+        # Audit writes go through the writer service when one is configured.
+        # The gateway's own service account deliberately no longer holds the
+        # append permission: it needs bigquery.jobs.create for /api/audit-logs
+        # and the platform console, and jobs.create + tables.updateData on the
+        # same table is DML — the ability to rewrite compliance evidence. The
+        # two halves now live on two identities, neither of which has both.
+        #
+        # Falls back to a direct writer when AUDIT_WRITER_URL is unset, which
+        # is what local development and the test suite use.
+        self.auditor = (
+            RemoteAuditLogger(AUDIT_WRITER_URL)
+            if AUDIT_WRITER_URL
+            else AuditLogger(self.bq, audit_dataset(), audit_table())
+        )
         # Slack wraps the audit notifier rather than replacing it: the audit
         # record is the guarantee, Slack is the convenience on top.
         self.notifier = SlackNotifier(
@@ -57,6 +73,9 @@ class Gateway:
             dashboard_base_url=DASHBOARD_BASE_URL,
         )
         self.raw_bucket = raw_docs_bucket()
+        # Uploads land here, not in raw_bucket. Only the scanner may promote
+        # them across.
+        self.quarantine_bucket = quarantine_bucket()
         self._gemini = None
         self._task_service = None
 
@@ -86,8 +105,10 @@ class Gateway:
                 location=os.environ.get("CLOUD_TASKS_LOCATION", "us-central1"),
                 queue=os.environ.get("CLOUD_TASKS_QUEUE", "cg-task-queue"),
                 target_urls={
+                    "scan": os.environ.get("SCANNER_URL", ""),
                     "ingest": os.environ.get("INGESTION_URL", ""),
                     "check": os.environ.get("COMPLIANCE_URL", ""),
+                    "report": os.environ.get("REPORTING_URL", ""),
                 },
                 invoker_service_account=os.environ.get("INVOKER_SA", ""),
                 internal_token=os.environ.get("INTERNAL_TASK_TOKEN"),

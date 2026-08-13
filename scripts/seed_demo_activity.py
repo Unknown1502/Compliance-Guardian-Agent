@@ -13,8 +13,10 @@ a complaint describing neglect with no matching incident report.
 
 Deliberately NOT a substitute for running real checks. It writes stored
 records directly rather than calling Gemini, so it is fast, free and
-deterministic -- the same demo every time you rehearse. Records carry
-`demo_seeded: True` so they can be told apart from real activity and removed.
+deterministic -- the same demo every time you rehearse. Seeded records are
+identified by their `demo-doc-` / `demo-chk-` id prefix, so what is stored
+stays byte-for-byte what the strict models accept: an extra marker field
+fails `model_validate` on read and 500s the API.
 
 Idempotent: fixed ids, set() upserts. Re-running replaces rather than
 duplicates.
@@ -54,7 +56,8 @@ RAW_BUCKET_SUFFIX = "-cg-raw-docs"
 RULE_SET_VERSION = "1.1.0"
 MODEL_NAME = "gemini-3.1-flash-lite"
 PROMPT_VERSION = "compliance_v1"
-SEED_MARKER = "demo_seeded"
+DOC_ID_PREFIX = "demo-doc-"
+CHECK_ID_PREFIX = "demo-chk-"
 
 # A reviewer must be a real uid for the escalation queue to attribute a
 # decision. Overridden by --reviewer-uid when the demo account differs.
@@ -353,8 +356,8 @@ def seed(project: str, tenant: str, reviewer_uid: str, reviewer_email: str) -> N
 
     for i, item in enumerate(plan):
         tpl, decision, when = item["tpl"], item["decision"], item["when"]
-        doc_id = f"demo-doc-{i:03d}"
-        check_id = f"demo-chk-{i:03d}"
+        doc_id = f"{DOC_ID_PREFIX}{i:03d}"
+        check_id = f"{CHECK_ID_PREFIX}{i:03d}"
         participant = PARTICIPANTS[i % len(PARTICIPANTS)]
         filename = f"{tpl['key']}_{when.strftime('%Y%m%d')}.txt"
 
@@ -376,9 +379,7 @@ def seed(project: str, tenant: str, reviewer_uid: str, reviewer_email: str) -> N
             filename=filename,
             extracted_fields={"participant": participant, "title": tpl["title"]},
         )
-        payload = document.model_dump(mode="json")
-        payload[SEED_MARKER] = True
-        db.collection("documents").document(doc_id).set(payload)
+        db.collection("documents").document(doc_id).set(document.model_dump(mode="json"))
 
         risk = tpl["risk"]
         risk_score = random.randint(*risk) if isinstance(risk, tuple) else risk
@@ -401,9 +402,7 @@ def seed(project: str, tenant: str, reviewer_uid: str, reviewer_email: str) -> N
             ),
             created_at=when,
         )
-        cpayload = check.model_dump(mode="json")
-        cpayload[SEED_MARKER] = True
-        db.collection("compliance_checks").document(check_id).set(cpayload)
+        db.collection("compliance_checks").document(check_id).set(check.model_dump(mode="json"))
         counts[decision] += 1
 
     print(f"seeded into {tenant} ({project})")
@@ -418,9 +417,9 @@ def wipe(project: str, tenant: str) -> None:
     db = firestore.Client(project=project)
     gcs = storage.Client(project=project)
     removed = 0
-    for coll in ("documents", "compliance_checks"):
-        for snap in db.collection(coll).where(SEED_MARKER, "==", True).stream():
-            if snap.to_dict().get("tenant_id") == tenant:
+    for coll, prefix in (("documents", DOC_ID_PREFIX), ("compliance_checks", CHECK_ID_PREFIX)):
+        for snap in db.collection(coll).where("tenant_id", "==", tenant).stream():
+            if snap.id.startswith(prefix):
                 snap.reference.delete()
                 removed += 1
     bucket = gcs.bucket(f"{project}{RAW_BUCKET_SUFFIX}")

@@ -20,7 +20,13 @@ from urllib.parse import urlparse
 from audit_logger import AuditLogger
 from gcp_clients.firestore_repo import FirestoreRepo
 from google.cloud import storage
-from schema_validators import Document, DocumentStatus, RuleSet, load_ruleset
+from schema_validators import (
+    PROCESSABLE_SCAN_STATUSES,
+    Document,
+    DocumentStatus,
+    RuleSet,
+    load_ruleset,
+)
 
 from ingestion_agent.prompts import (
     INGESTION_PROMPT_VERSION,
@@ -42,6 +48,24 @@ _MIME_BY_EXT = {
     ".csv": "text/csv",
     ".json": "application/json",
 }
+
+
+class UnscannedDocumentError(Exception):
+    """Raised when ingestion is asked to process bytes no scanner has cleared.
+
+    Deliberately not caught by the failure handler inside ingest_document:
+    marking the document `failed` would imply the content was assessed and
+    found wanting. It was never read. The task fails loudly so the file stays
+    in quarantine and an operator can see why.
+    """
+
+    def __init__(self, document_id: str, scan_status: str):
+        self.document_id = document_id
+        self.scan_status = scan_status
+        super().__init__(
+            f"document {document_id} is not cleared for processing "
+            f"(scan_status={scan_status})"
+        )
 
 
 @dataclass(frozen=True)
@@ -113,6 +137,18 @@ def ingest_document(
 ) -> IngestionOutcome:
     """Extract structured fields for one document. Tenant-scoped and idempotent."""
     document = repo.get_document(document_id, tenant_id)  # raises on tenant mismatch
+
+    # Trust boundary. Nothing below this line may run on bytes a scanner has
+    # not cleared, so the check sits before the ruleset load and before
+    # _read_blob rather than next to the Gemini call — the file must not be
+    # fetched at all, let alone parsed.
+    #
+    # Deliberately an allowlist of one: SCAN_FAILED, SCAN_TIMEOUT and a
+    # scanner that never ran all land here, because "we could not determine
+    # this file is safe" is not "this file is safe".
+    if document.scan_status not in PROCESSABLE_SCAN_STATUSES:
+        raise UnscannedDocumentError(document_id, document.scan_status.value)
+
     tenant = repo.get_tenant(tenant_id)
 
     try:

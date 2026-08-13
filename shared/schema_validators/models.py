@@ -6,14 +6,18 @@ these models so that a malformed record can never reach storage silently.
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+logger = logging.getLogger("cg.schema")
+
 _SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
+_M = TypeVar("_M", bound=BaseModel)
 
 
 def utcnow() -> datetime:
@@ -25,6 +29,39 @@ class StrictModel(BaseModel):
     """Base: reject unknown fields so schema drift fails loudly, not silently."""
 
     model_config = ConfigDict(extra="forbid")
+
+
+def validate_stored(model_cls: type[_M], raw: dict[str, Any] | None) -> _M:
+    """Validate a record read back from Firestore, tolerating unknown fields.
+
+    Strict on write, tolerant on read. The two are not in tension: rejecting
+    unknown fields when *constructing* a record is what stops typos and stale
+    call sites, but applying the same rule when *reading* makes every schema
+    addition a rolling-deploy outage. During a deploy both revisions are live;
+    the new one writes a field the old one has never heard of, and the old one
+    then 500s on every record the new one touched — including records it is
+    only reading.
+
+    That is not hypothetical here. A seeder wrote one extra field into this
+    project's Firestore and every affected read 500'd until the data was
+    repaired, which is also how the cross-tenant existence oracle surfaced.
+
+    Unknown fields are dropped rather than kept, so a stale writer cannot
+    smuggle values past validation, and each one is logged once at WARNING so
+    a genuine drift is still visible rather than silently swallowed.
+    """
+    if not raw:
+        return model_cls.model_validate(raw or {})
+    unknown = raw.keys() - model_cls.model_fields.keys()
+    if not unknown:
+        return model_cls.model_validate(raw)
+    logger.warning(
+        "%s: ignoring unknown stored field(s) %s — a newer revision probably "
+        "wrote them; this read is tolerated so a rolling deploy does not 500",
+        model_cls.__name__,
+        sorted(unknown),
+    )
+    return model_cls.model_validate({k: v for k, v in raw.items() if k not in unknown})
 
 
 # ---------------------------------------------------------------------------
@@ -157,6 +194,28 @@ class DocumentStatus(str, Enum):
     FAILED = "failed"
 
 
+class ScanStatus(str, Enum):
+    """Trust state of the bytes a tenant uploaded.
+
+    Only CLEAN permits downstream processing. Every other value holds the file
+    in quarantine — including the failure states, deliberately: a scanner that
+    could not answer has not said the file is safe, and treating "we don't
+    know" as "clean" is how malware reaches a worker.
+    """
+
+    UNSCANNED = "unscanned"
+    SCAN_PENDING = "scan_pending"
+    SCANNING = "scanning"
+    CLEAN = "clean"
+    INFECTED = "infected"
+    SCAN_FAILED = "scan_failed"
+    SCAN_TIMEOUT = "scan_timeout"
+
+
+#: The only state from which a document may enter compliance processing.
+PROCESSABLE_SCAN_STATUSES = frozenset({ScanStatus.CLEAN})
+
+
 class Document(StrictModel):
     document_id: str = Field(min_length=1)
     tenant_id: str = Field(min_length=1)
@@ -174,6 +233,21 @@ class Document(StrictModel):
     content_type: str = Field(default="", max_length=100)
     size_bytes: int = Field(default=0, ge=0)
     filename: str = Field(default="", max_length=260)
+
+    # Malware scanning. The default is UNSCANNED rather than CLEAN so that a
+    # record written by an older code path, restored from a backup, or hand-
+    # repaired is refused processing instead of inheriting trust it never
+    # earned. Promotion to CLEAN is only ever written by the scanner.
+    scan_status: ScanStatus = ScanStatus.UNSCANNED
+    scanner: str = Field(default="", max_length=60)
+    scanner_version: str = Field(default="", max_length=80)
+    scan_started_at: datetime | None = None
+    scan_completed_at: datetime | None = None
+    # Signature name when INFECTED. Surfaced to operators, not to the uploader.
+    threat_name: str = Field(default="", max_length=200)
+    # Where the bytes live while untrusted. Cleared once promoted to the
+    # approved bucket, so storage_ref is always the location that may be read.
+    quarantine_ref: str = Field(default="", max_length=500)
 
 
 # ---------------------------------------------------------------------------
@@ -444,11 +518,101 @@ class ReportRow(StrictModel):
 
 
 # ---------------------------------------------------------------------------
+# Firestore: reports — the durable lifecycle of one report.
+#
+# Separate from ReportRow above, which is the BigQuery record of a report that
+# was finished. This is the record of one that is being *attempted*, and it is
+# what makes "the task said it worked" and "the file is there" the same claim.
+# ---------------------------------------------------------------------------
+
+
+class ReportStatus(str, Enum):
+    """Where a report is in its lifecycle.
+
+    READY is the only status the product may treat as downloadable, and it is
+    written in exactly one place: after the stored object has been read back
+    and matched against its recorded size and checksum. Every other status
+    means there is either no artifact or no proof of one.
+    """
+
+    QUEUED = "queued"
+    GENERATING = "generating"
+    VALIDATING = "validating"
+    PERSISTING = "persisting"
+    VERIFYING = "verifying"
+    READY = "ready"
+    FAILED = "failed"
+    RETRYING = "retrying"
+
+
+#: Statuses a worker may pick up and drive forward. A report already READY is
+#: not re-generated — that is what makes a redelivered task idempotent.
+RESUMABLE_REPORT_STATUSES = frozenset(
+    {
+        ReportStatus.QUEUED,
+        ReportStatus.GENERATING,
+        ReportStatus.VALIDATING,
+        ReportStatus.PERSISTING,
+        ReportStatus.VERIFYING,
+        ReportStatus.RETRYING,
+        ReportStatus.FAILED,
+    }
+)
+
+
+class ReportRecord(StrictModel):
+    """Durable state and artifact metadata for one report."""
+
+    report_id: str = Field(min_length=1)
+    tenant_id: str = Field(min_length=1)
+    period_start: datetime
+    period_end: datetime
+    status: ReportStatus = ReportStatus.QUEUED
+    task_id: str = Field(default="", max_length=128)
+    requested_by: str = Field(default="", max_length=128)
+
+    # Artifact metadata. Empty until the object exists; storage_key is a bucket
+    # path and is never returned to a client — the download endpoint builds its
+    # own path from the caller's verified tenant claim.
+    storage_key: str = Field(default="", max_length=500)
+    filename: str = Field(default="", max_length=260)
+    format: str = Field(default="", max_length=16)
+    mime_type: str = Field(default="", max_length=100)
+    size_bytes: int = Field(default=0, ge=0)
+    checksum: str = Field(default="", max_length=64)
+
+    # Summary, so the dashboard can show a finished report without fetching
+    # the artifact itself.
+    total_checks: int = Field(default=0, ge=0)
+    pass_count: int = Field(default=0, ge=0)
+    fail_count: int = Field(default=0, ge=0)
+    escalated_count: int = Field(default=0, ge=0)
+    executive_summary: str = Field(default="", max_length=4000)
+    model_name: str = Field(default="", max_length=100)
+    used_fixture: bool = False
+
+    attempts: int = Field(default=0, ge=0)
+    # Operator-facing. The API returns a generic message; this is the detail.
+    error: str = Field(default="", max_length=500)
+
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+    expires_at: datetime | None = None
+
+    @property
+    def is_downloadable(self) -> bool:
+        return self.status is ReportStatus.READY
+
+
+# ---------------------------------------------------------------------------
 # Firestore: tasks (orchestrator lifecycle; backs GET /api/tasks/:id)
 # ---------------------------------------------------------------------------
 
 
 class TaskType(str, Enum):
+    # SCAN runs before INGEST and is what promotes a document out of
+    # quarantine. Nothing dispatches INGEST directly from upload any more.
+    SCAN = "scan"
     INGEST = "ingest"
     CHECK = "check"
     REPORT = "report"

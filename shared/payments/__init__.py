@@ -90,12 +90,28 @@ _DEFAULT_PRICES: dict[tuple[str, str], tuple[int, str]] = {
     # per-user-per-month or an annual contract, nobody sells a single audit.
     # It is priced as a door rather than a product: low enough to be a
     # decision one person makes alone, high enough not to signal the output
-    # is trivial, and a 4x gap to the subscription so unlimited is the
-    # obvious choice past roughly four documents a month.
-    ("razorpay", "oneoff"): (199900, "INR"),        # ₹1,999
-    ("razorpay", "subscription"): (830000, "INR"),  # ₹8,300
-    ("paypal", "oneoff"): (2500, "USD"),            # $25.00
-    ("paypal", "subscription"): (9900, "USD"),      # $99.00
+    # is trivial, and a ~4x gap to the subscription so Pro is the obvious
+    # choice past roughly four documents a month.
+    #
+    # THIS TABLE IS THE ONLY PRICE. Every surface — checkout, the pricing
+    # page, the billing screen, both providers, entitlement grants — resolves
+    # here, and nothing in the product accepts an amount from a client.
+    #
+    # INR is the launch price. The USD figures are the SAME two plans sold
+    # internationally through PayPal, not different products, converted at
+    # roughly ₹83/USD and then rounded to a sane price point:
+    #
+    #     ₹1,999 / 83 ≈ $24.1  → $25
+    #     ₹8,300 / 83 ≈ $100   → $99
+    #
+    # They are fixed, not live-converted: a checkout amount that moves with
+    # the spot rate is impossible to reconcile against an invoice. When the
+    # INR price changes, recompute these deliberately rather than leaving
+    # them to drift into a different commercial offer.
+    ("razorpay", "oneoff"): (199900, "INR"),        # ₹1,999 one-time
+    ("razorpay", "subscription"): (830000, "INR"),  # ₹8,300 / month
+    ("paypal", "oneoff"): (2500, "USD"),            # $25.00 one-time
+    ("paypal", "subscription"): (9900, "USD"),      # $99.00 / month
 }
 
 
