@@ -45,11 +45,37 @@
       rel="stylesheet"
     />
 
-    <!-- No dark-mode script: this design system is deliberately light-only
-         (see tailwind.config.js) — a dark variant would contradict the
-         calm/editorial identity, not complement it, and previously caused
-         the app shell to silently diverge from the landing page whenever a
-         visitor's OS preferred dark mode. -->
+    <!--
+      Applies the theme before first paint.
+
+      This has to be inline and synchronous: anything deferred, or anything
+      inside the React bundle, runs after the browser has already painted, and
+      a dark-mode user gets a white flash on every navigation. It is also what
+      makes the saved preference survive a reload — without it the app booted
+      light every time regardless of what was stored.
+
+      Deliberately duplicates the resolution logic in ThemeContext.tsx rather
+      than importing it, because there is no module system available this
+      early. The storage key must stay in step with THEME_STORAGE_KEY.
+    -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem("cg_theme");
+          var dark =
+            stored === "dark" ||
+            ((stored === "system" || !stored) &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches);
+          if (dark) {
+            document.documentElement.classList.add("dark");
+            var meta = document.querySelector('meta[name="theme-color"]');
+            if (meta) meta.setAttribute("content", "#15171A");
+          }
+        } catch (e) {
+          /* Blocked storage: light is a safe default. */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

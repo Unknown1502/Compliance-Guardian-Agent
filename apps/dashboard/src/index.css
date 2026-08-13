@@ -2,6 +2,62 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Semantic tokens, defined once per theme.
+ *
+ * These were fixed hex values in the Tailwind config, which meant bg-surface
+ * resolved to #FFFFFF in every theme — so a card kept its white background in
+ * dark mode no matter how many dark: variants surrounded it. Defining them as
+ * variables here lets one class be correct in both themes, and makes the dark
+ * palette a deliberate set of values rather than the inverse of the light one.
+ *
+ * Channels are space-separated RGB so Tailwind's opacity modifiers still work
+ * (bg-surface/60 and the like).
+ *
+ * The dark palette is warm charcoal, not blue-slate and not black. The light
+ * theme is a warm off-white; carrying that warmth across keeps the product
+ * recognisably itself in both themes instead of switching personality. Pure
+ * black is avoided because it makes elevation impossible to read — surfaces
+ * need somewhere to sit above the background.
+ */
+:root {
+  --bg: 250 249 246; /* warm off-white */
+  --surface: 255 255 255;
+  --surface-2: 246 247 249;
+  --sidebar: 255 255 255;
+  --line: 230 232 236;
+  --input: 255 255 255;
+  --ink: 17 24 39; /* primary text */
+  --ink-2: 75 85 99; /* secondary text */
+  --muted: 107 114 128;
+  --brand: 37 99 235;
+  --good: 22 163 74;
+  --warning: 217 119 6;
+  --serious: 234 88 12;
+  --critical: 220 38 38;
+  --info: 100 116 139;
+}
+
+html.dark {
+  --bg: 21 23 26; /* warm charcoal, not #000 */
+  --surface: 28 31 35;
+  --surface-2: 35 39 44;
+  --sidebar: 24 27 30;
+  --line: 46 51 58;
+  --input: 35 39 44;
+  --ink: 237 239 242;
+  --ink-2: 166 173 184; /* 7.1:1 on --surface */
+  --muted: 138 146 158; /* 5.2:1 on --surface */
+  /* Lifted so they stay legible against a dark ground: the light-theme
+     brand and status colours fail contrast here. */
+  --brand: 96 165 250;
+  --good: 74 222 128;
+  --warning: 251 191 36;
+  --serious: 251 146 60;
+  --critical: 248 113 113;
+  --info: 148 163 184;
+}
+
 html,
 body,
 #root {

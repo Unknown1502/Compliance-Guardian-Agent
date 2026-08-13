@@ -18,13 +18,19 @@ export default {
       },
       colors: {
         // Editorial enterprise-trust palette — no blue-grey slate default.
-        bg: "#FAF9F6",
-        surface: "#FFFFFF",
-        "surface-2": "#F6F7F9",
-        line: "#E6E8EC",
-        ink: "#111827",
-        "ink-2": "#4B5563",
-        muted: "#6B7280",
+        //
+        // Semantic tokens resolve to CSS variables declared in index.css, so
+        // one class is correct in both themes. Fixed hex here is what made
+        // bg-surface stay #FFFFFF in dark mode.
+        bg: "rgb(var(--bg) / <alpha-value>)",
+        surface: "rgb(var(--surface) / <alpha-value>)",
+        "surface-2": "rgb(var(--surface-2) / <alpha-value>)",
+        line: "rgb(var(--line) / <alpha-value>)",
+        ink: "rgb(var(--ink) / <alpha-value>)",
+        "ink-2": "rgb(var(--ink-2) / <alpha-value>)",
+        muted: "rgb(var(--muted) / <alpha-value>)",
+        sidebar: "rgb(var(--sidebar) / <alpha-value>)",
+        input: "rgb(var(--input) / <alpha-value>)",
         slate: {
           50: "#FAF9F6",
           100: "#F6F7F9",
@@ -52,9 +58,21 @@ export default {
           950: "#172554",
         },
         audit: "#0EA5E9",
-        info: "#64748B",
-        risk: { low: "#16A34A", medium: "#F59E0B", high: "#DC2626" },
-        status: { good: "#16A34A", warning: "#F59E0B", serious: "#EA580C", critical: "#DC2626" },
+        info: "rgb(var(--info) / <alpha-value>)",
+        // Risk and status carry meaning, so they have to stay legible in both
+        // themes rather than keeping one fixed value. The light-theme greens
+        // and reds fail contrast on charcoal; the variables lift them.
+        risk: {
+          low: "rgb(var(--good) / <alpha-value>)",
+          medium: "rgb(var(--warning) / <alpha-value>)",
+          high: "rgb(var(--critical) / <alpha-value>)",
+        },
+        status: {
+          good: "rgb(var(--good) / <alpha-value>)",
+          warning: "rgb(var(--warning) / <alpha-value>)",
+          serious: "rgb(var(--serious) / <alpha-value>)",
+          critical: "rgb(var(--critical) / <alpha-value>)",
+        },
       },
       maxWidth: { container: "1280px" },
       borderRadius: {

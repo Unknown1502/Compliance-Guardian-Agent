@@ -26,6 +26,7 @@ import { useAuth } from "../auth/AuthContext";
 import { PageTransition } from "./ui/PageTransition";
 import { VerifyEmailBanner } from "./VerifyEmailBanner";
 import { cn } from "../lib/cn";
+import { ThemeToggle } from "./ui/ThemeToggle";
 
 interface NavItem {
   to: string;
@@ -268,6 +269,16 @@ export function Layout() {
               {collapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
             </button>
           </div>
+
+          {/* Also in Settings; here too because a theme control people cannot
+              find is the same as not having one. Hidden when the sidebar is
+              collapsed — three segments do not fit, and the full control is
+              one click away in Settings. */}
+          {!collapsed && (
+            <div className="mt-3">
+              <ThemeToggle compact />
+            </div>
+          )}
         </div>
       </aside>
 

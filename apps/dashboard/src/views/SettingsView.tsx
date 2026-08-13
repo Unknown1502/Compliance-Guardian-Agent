@@ -29,6 +29,7 @@ import {
 import { PageHeading } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
+import { ThemeToggle } from "../components/ui/ThemeToggle";
 import { cn } from "../lib/cn";
 
 const FIELD =
@@ -507,6 +508,13 @@ export function SettingsView() {
           <Button variant="outline" size="md" className="mt-4" onClick={() => signOut()}>
             Sign out
           </Button>
+        </Panel>
+
+        <Panel
+          title="Appearance"
+          description="Applies to this browser. System follows your operating system."
+        >
+          <ThemeToggle />
         </Panel>
 
         <Panel
