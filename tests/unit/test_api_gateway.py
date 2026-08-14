@@ -303,6 +303,19 @@ class TestTeam:
         uids = {m["uid"] for m in r.json()}
         assert uids == {"u-mine"}
 
+    def test_reviewer_can_list_team(self, client):
+        c, fake = client
+        self._seed(fake, uid="u-mine", tenant="tenant-a", role="owner")
+        self._seed(fake, uid="u-mine-2", tenant="tenant-a", role="reviewer")
+
+        r = c.get(
+            "/api/team",
+            headers={"Authorization": f"Bearer {_dev_token('u1','tenant-a','reviewer')}"},
+        )
+        assert r.status_code == 200, r.text
+        uids = {m["uid"] for m in r.json()}
+        assert uids == {"u-mine", "u-mine-2"}
+
     def test_reviewer_cannot_add_member(self, client):
         c, _ = client
         r = c.post(
