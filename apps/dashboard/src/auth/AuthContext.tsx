@@ -71,7 +71,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // firebase mode
     const unsub = onAuthStateChanged(firebaseAuth(), async (user) => {
       if (user) {
-        const tokenResult = await user.getIdTokenResult();
+        // Force-refresh rather than trust a cached token: a member who was
+        // just invited (custom claims set server-side moments ago) must not
+        // be stuck with a token minted before tenant_id/role existed on it.
+        const tokenResult = await user.getIdTokenResult(true);
         const tenantId = (tokenResult.claims.tenant_id as string) ?? "";
         const role = (tokenResult.claims.role as Role) ?? "owner";
         setSession({
