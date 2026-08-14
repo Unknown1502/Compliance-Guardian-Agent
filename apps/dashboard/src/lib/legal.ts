@@ -29,7 +29,7 @@ export const LEGAL = {
    * Support address. Currently a working mailbox rather than a branded one;
    * swap for support@<domain> once a domain is registered.
    */
-  supportEmail: "nikhiltale710@gmail.com",
+  supportEmail: "complianceguardianagent@gmail.com",
 
   /** Where the product lives. Used for canonical links and in-document refs. */
   siteUrl: "https://cg-guardian-9856.web.app",
