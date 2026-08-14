@@ -19,6 +19,7 @@ import {
   decideCheck,
   addCheckComment,
   assignCheck,
+  claimCheck,
   listTeam,
   ApiError,
   type TeamMember,
@@ -260,6 +261,31 @@ export function CheckDetail() {
     }
   };
 
+  const claimForSelf = async () => {
+    if (!session || !checkId) return;
+    setBusy(true);
+    try {
+      setCheck(await claimCheck(session, checkId));
+      toast.push({ kind: "success", title: "Assigned to you" });
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        toast.push({
+          kind: "warning",
+          title: "This review has already been assigned to another reviewer.",
+        });
+        await load();
+      } else {
+        toast.push({
+          kind: "error",
+          title: "Could not assign",
+          description: (err as Error).message,
+        });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (error && !check) return <p className="text-[13.5px] text-status-critical">{error}</p>;
   if (!check) {
     return (
@@ -416,12 +442,34 @@ export function CheckDetail() {
                     </option>
                   ))}
                 </select>
-              ) : (
+              ) : check.assigned_to === session?.uid ? (
+                <div className="mt-1.5">
+                  <p className="text-[13px] font-medium text-ink">You</p>
+                  <p className="mt-0.5 text-[12px] text-ink-2">
+                    You are assigned as the reviewer.
+                  </p>
+                </div>
+              ) : check.assigned_to ? (
                 <p className="mt-1 text-[13px] text-ink-2">
-                  {check.assigned_to
-                    ? team.find((m) => m.uid === check.assigned_to)?.email ?? check.assigned_to
-                    : "Unassigned"}
+                  {team.find((m) => m.uid === check.assigned_to)?.email ?? check.assigned_to}
                 </p>
+              ) : canReview ? (
+                <div className="mt-1.5">
+                  <p className="text-[13px] text-ink-2">Unassigned</p>
+                  <p className="mt-0.5 text-[12px] text-muted">
+                    No reviewer is currently assigned.
+                  </p>
+                  <Button size="sm" className="mt-2" onClick={claimForSelf} disabled={busy}>
+                    Assign to me
+                  </Button>
+                </div>
+              ) : (
+                <div className="mt-1.5">
+                  <p className="text-[13px] text-ink-2">Unassigned</p>
+                  <p className="mt-0.5 text-[12px] text-muted">
+                    Awaiting an authorized reviewer.
+                  </p>
+                </div>
               )}
             </div>
 
