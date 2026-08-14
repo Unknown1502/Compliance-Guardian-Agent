@@ -100,6 +100,16 @@ class FakeRepo:
         self.checks[check_id] = updated
         return updated
 
+    def claim_check(self, *, check_id, tenant_id, reviewer_id):
+        from gcp_clients.firestore_repo import ClaimConflictError
+
+        c = self.get_check(check_id, tenant_id)
+        if c.assigned_to is not None:
+            raise ClaimConflictError(check_id)
+        updated = c.model_copy(update={"assigned_to": reviewer_id})
+        self.checks[check_id] = updated
+        return updated
+
     def upsert_tenant(self, tenant) -> None:
         self.tenants[tenant.tenant_id] = tenant
 
@@ -629,6 +639,75 @@ class TestOversight:
             json={"assignee_uid": None},
         )
         assert r.json()["assigned_to"] is None
+
+    def test_reviewer_can_claim_unassigned_check(self, client):
+        c, fake = client
+        r = c.post(
+            "/api/compliance/checks/check-a/claim",
+            headers=self._hdr(uid="rev-1", role="reviewer"),
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["assigned_to"] == "rev-1"
+
+    def test_admin_can_claim_unassigned_check(self, client):
+        c, _ = client
+        r = c.post(
+            "/api/compliance/checks/check-a/claim",
+            headers=self._hdr(uid="admin-1", role="admin"),
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["assigned_to"] == "admin-1"
+
+    def test_owner_cannot_claim(self, client):
+        c, _ = client
+        r = c.post(
+            "/api/compliance/checks/check-a/claim",
+            headers=self._hdr(role="owner"),
+        )
+        assert r.status_code == 403
+
+    def test_claim_ignores_any_client_supplied_identity(self, client):
+        """The endpoint takes no body field for identity — nothing to spoof."""
+        c, _ = client
+        r = c.post(
+            "/api/compliance/checks/check-a/claim",
+            headers=self._hdr(uid="rev-1", role="reviewer"),
+            json={"assignee_uid": "someone-else"},  # no request model reads this
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["assigned_to"] == "rev-1"
+
+    def test_claim_on_already_assigned_check_is_409(self, client):
+        c, _ = client
+        c.post(
+            "/api/compliance/checks/check-a/claim",
+            headers=self._hdr(uid="rev-1", role="reviewer"),
+        )
+        r = c.post(
+            "/api/compliance/checks/check-a/claim",
+            headers=self._hdr(uid="rev-2", role="reviewer"),
+        )
+        assert r.status_code == 409
+        assert "already been assigned" in r.json()["detail"]
+
+    def test_claim_on_other_tenant_check_is_404(self, client):
+        c, _ = client
+        r = c.post(
+            "/api/compliance/checks/check-a/claim",
+            headers=self._hdr(tenant="tenant-b", role="reviewer"),
+        )
+        assert r.status_code == 404
+
+    def test_claim_writes_audit_event_with_self_method(self, client):
+        c, fake = client
+        c.post(
+            "/api/compliance/checks/check-a/claim",
+            headers=self._hdr(uid="rev-1", role="reviewer"),
+        )
+        events = [e for e in fake.auditor.events if e["action"] == "check.assigned"]
+        assert len(events) == 1
+        assert events[0]["actor"] == "rev-1"
+        assert events[0]["after_state"]["assignment_method"] == "self"
 
     def test_queue_returns_escalated_only_and_is_tenant_scoped(self, client):
         c, _ = client

@@ -68,6 +68,9 @@ class DecisionConflictError(RuntimeError):
     """Raised when a reviewer decision loses a race (check already decided)."""
 
 
+class ClaimConflictError(RuntimeError):
+    """Raised when a reviewer's self-claim loses a race (already assigned)."""
+
 
 class EntitlementExhaustedError(RuntimeError):
     """Raised when a workspace has no report allowance left.
@@ -598,6 +601,40 @@ class FirestoreRepo:
             updated = current.model_copy(
                 update={"decision": decision, "reviewer_id": reviewer_id}
             )
+            transaction.set(check_ref, updated.model_dump(mode="json"))
+            return updated
+
+        return _txn(db.transaction())
+
+    def claim_check(
+        self,
+        *,
+        check_id: str,
+        tenant_id: str,
+        reviewer_id: str,
+    ) -> ComplianceCheck:
+        """Self-assign an unclaimed check to the caller, inside a transaction.
+
+        Concurrency guarantee: mirrors apply_reviewer_decision above. The
+        transaction re-reads the check and refuses to act unless assigned_to
+        is still None. If two reviewers claim at once, exactly one
+        transaction commits; the other sees the now-claimed state and raises
+        ClaimConflictError -> HTTP 409.
+        """
+        db = self._db
+        check_ref = db.collection(COLLECTION_CHECKS).document(check_id)
+
+        @firestore.transactional
+        def _txn(transaction) -> ComplianceCheck:
+            snap = check_ref.get(transaction=transaction)
+            current = ComplianceCheck.model_validate(
+                _own_or_raise(snap, tenant_id, f"compliance check {check_id}")
+            )
+            if current.assigned_to is not None:
+                raise ClaimConflictError(
+                    f"check {check_id} is already assigned to {current.assigned_to}"
+                )
+            updated = current.model_copy(update={"assigned_to": reviewer_id})
             transaction.set(check_ref, updated.model_dump(mode="json"))
             return updated
 
