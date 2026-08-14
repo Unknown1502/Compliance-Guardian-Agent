@@ -625,6 +625,17 @@ export async function assignCheck(
   );
 }
 
+export async function claimCheck(
+  session: Session,
+  checkId: string,
+): Promise<ComplianceCheck> {
+  return jsonOrThrow(
+    await authedFetch(session, `/api/compliance/checks/${checkId}/claim`, {
+      method: "POST",
+    }),
+  );
+}
+
 export async function getReviewQueue(session: Session): Promise<ComplianceCheck[]> {
   return jsonOrThrow(await authedFetch(session, "/api/compliance/queue"));
 }

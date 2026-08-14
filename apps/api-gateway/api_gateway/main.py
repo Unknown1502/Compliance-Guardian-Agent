@@ -52,6 +52,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from firebase_admin.auth import EmailAlreadyExistsError
 from gcp_clients import audit_dataset, audit_table, project_id
 from gcp_clients.firestore_repo import (
+    ClaimConflictError,
     DecisionConflictError,
     EntitlementExhaustedError,
     NotFoundError,
@@ -1275,6 +1276,45 @@ def assign_check(
         dedup_key=f"{check_id}:assign:{assignee or 'none'}:{datetime.now(timezone.utc).isoformat()}",
         before_state={"assigned_to": previous},
         after_state={"assigned_to": assignee},
+    )
+    return _check_to_response(updated)
+
+
+@app.post("/api/compliance/checks/{check_id}/claim", response_model=CheckResponse)
+def claim_check(
+    check_id: str = id_path(),
+    auth: AuthContext = Depends(require_role("reviewer")),
+) -> CheckResponse:
+    """Let the caller assign an unclaimed check to themselves.
+
+    Identity always comes from the verified token (auth.uid) — the request
+    has no body, so there is nothing for a client to spoof. require_role
+    ("reviewer") matches decide_check's own gate exactly (reviewer, or admin
+    implicitly): an owner who self-claimed would be handed a check
+    decide_check then refuses to let them act on.
+    """
+    g = gw()
+    try:
+        updated = g.repo.claim_check(
+            check_id=check_id, tenant_id=auth.tenant_id, reviewer_id=auth.uid
+        )
+    except NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from exc
+    except TenantMismatchError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from None
+    except ClaimConflictError as exc:
+        logger.info("claim conflict on check %s: %s", check_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This review has already been assigned to another reviewer.",
+        ) from exc
+    g.auditor.log(
+        tenant_id=auth.tenant_id,
+        actor=auth.uid,
+        action="check.assigned",
+        dedup_key=f"{check_id}:assign:{auth.uid}:{datetime.now(timezone.utc).isoformat()}",
+        before_state={"assigned_to": None},
+        after_state={"assigned_to": auth.uid, "assignment_method": "self"},
     )
     return _check_to_response(updated)
 
