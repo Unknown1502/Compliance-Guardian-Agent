@@ -53,7 +53,7 @@ export function TeamView() {
         if (e instanceof ApiError && e.status === 403) {
           setLoadError({
             kind: "permission",
-            message: "You don't have permission to view this team's members.",
+            message: (e as Error).message || "You don't have permission to view this team's members.",
           });
         } else {
           setLoadError({
@@ -248,9 +248,7 @@ export function TeamView() {
                 ? "Permission required"
                 : "Unable to load team members"
             }
-            description={
-              loadError.kind === "permission" ? loadError.message : "Please try again."
-            }
+            description={loadError.message}
             action={
               loadError.kind === "network" ? (
                 <Button size="sm" variant="outline" onClick={load}>

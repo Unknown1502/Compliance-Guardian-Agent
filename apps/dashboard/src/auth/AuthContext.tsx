@@ -70,25 +70,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     // firebase mode
     const unsub = onAuthStateChanged(firebaseAuth(), async (user) => {
-      if (user) {
-        // Force-refresh rather than trust a cached token: a member who was
-        // just invited (custom claims set server-side moments ago) must not
-        // be stuck with a token minted before tenant_id/role existed on it.
-        const tokenResult = await user.getIdTokenResult(true);
-        const tenantId = (tokenResult.claims.tenant_id as string) ?? "";
-        const role = (tokenResult.claims.role as Role) ?? "owner";
-        setSession({
-          uid: user.uid,
-          tenantId,
-          role,
-          email: user.email ?? undefined,
-          emailVerified: user.emailVerified,
-          getToken: () => user.getIdToken(),
-        });
-      } else {
-        setSession(null);
+      try {
+        if (user) {
+          // Force-refresh rather than trust a cached token: a member who was
+          // just invited (custom claims set server-side moments ago) must not
+          // be stuck with a token minted before tenant_id/role existed on it.
+          // Falls back to the cached token on a failed refresh (offline,
+          // flaky network) rather than throwing — a failed refresh must
+          // never wedge the whole app on the splash screen.
+          let tokenResult;
+          try {
+            tokenResult = await user.getIdTokenResult(true);
+          } catch {
+            tokenResult = await user.getIdTokenResult();
+          }
+          const tenantId = (tokenResult.claims.tenant_id as string) ?? "";
+          const role = (tokenResult.claims.role as Role) ?? "owner";
+          setSession({
+            uid: user.uid,
+            tenantId,
+            role,
+            email: user.email ?? undefined,
+            emailVerified: user.emailVerified,
+            getToken: () => user.getIdToken(),
+          });
+        } else {
+          setSession(null);
+        }
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     });
     return () => unsub();
   }, []);

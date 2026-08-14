@@ -264,6 +264,7 @@ export function CheckDetail() {
   const claimForSelf = async () => {
     if (!session || !checkId) return;
     setBusy(true);
+    setError(null);
     try {
       setCheck(await claimCheck(session, checkId));
       toast.push({ kind: "success", title: "Assigned to you" });
@@ -466,9 +467,11 @@ export function CheckDetail() {
               ) : (
                 <div className="mt-1.5">
                   <p className="text-[13px] text-ink-2">Unassigned</p>
-                  <p className="mt-0.5 text-[12px] text-muted">
-                    Awaiting an authorized reviewer.
-                  </p>
+                  {check.decision === "escalated" && (
+                    <p className="mt-0.5 text-[12px] text-muted">
+                      Awaiting an authorized reviewer.
+                    </p>
+                  )}
                 </div>
               )}
             </div>

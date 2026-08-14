@@ -88,6 +88,13 @@ resource "google_cloud_run_v2_service" "api_gateway" {
         name = "CG_CORS_ORIGINS"
         value = join(",", compact([
           "https://${var.project_id}.web.app",
+          # Firebase Hosting always serves a site on both .web.app and
+          # .firebaseapp.com — a dashboard user reaching the latter must not
+          # get silently CORS-blocked on every API call. Previously hand-set
+          # via `gcloud run services update`; captured here so `terraform
+          # apply` cannot delete it (see terraform.tfvars.example for why
+          # that already happened once, with a different origin).
+          "https://${var.project_id}.firebaseapp.com",
           var.admin_console_origin,
           "http://localhost:5173",
           "http://localhost:5174",
