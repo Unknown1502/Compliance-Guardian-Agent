@@ -24,7 +24,10 @@ export function TeamView() {
   const toast = useToast();
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<
+    { kind: "permission" | "network"; message: string } | null
+  >(null);
+  const [formError, setFormError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [confirmUid, setConfirmUid] = useState<string | null>(null);
@@ -39,9 +42,26 @@ export function TeamView() {
   const load = () => {
     if (!session) return;
     setLoading(true);
+    setLoadError(null);
     listTeam(session)
-      .then(setMembers)
-      .catch((e) => setError((e as Error).message))
+      .then((m) => {
+        setMembers(m);
+        setLoadError(null);
+      })
+      .catch((e) => {
+        setMembers([]);
+        if (e instanceof ApiError && e.status === 403) {
+          setLoadError({
+            kind: "permission",
+            message: "You don't have permission to view this team's members.",
+          });
+        } else {
+          setLoadError({
+            kind: "network",
+            message: "Something went wrong loading this workspace's team.",
+          });
+        }
+      })
       .finally(() => setLoading(false));
   };
 
@@ -51,7 +71,7 @@ export function TeamView() {
     e.preventDefault();
     if (!session) return;
     setBusy(true);
-    setError(null);
+    setFormError(null);
     try {
       const invited = await addTeamMember(session, { email, role, job_title: jobTitle });
       setInvite(invited);
@@ -69,7 +89,7 @@ export function TeamView() {
         err instanceof ApiError && err.status === 409
           ? "That email already has an account."
           : (err as Error).message;
-      setError(msg);
+      setFormError(msg);
       toast.push({ kind: "error", title: "Could not add member", description: msg });
     } finally {
       setBusy(false);
@@ -109,7 +129,7 @@ export function TeamView() {
         }
       />
 
-      {error && <p className="mb-4 text-[13px] text-status-critical">{error}</p>}
+      {formError && <p className="mb-4 text-[13px] text-status-critical">{formError}</p>}
 
       {invite && (
         <div className="mb-4 rounded-xl border border-green-200 bg-green-50 p-4 dark:border-green-900/60 dark:bg-green-950/25">
@@ -206,7 +226,11 @@ export function TeamView() {
       <div className="overflow-hidden rounded-xl border border-line bg-surface">
         <div className="border-b border-line bg-surface-2 px-4 py-2.5">
           <h3 className="text-[13px] font-semibold text-ink-2">
-            {members.length} member{members.length === 1 ? "" : "s"}
+            {loading
+              ? "Loading team members…"
+              : loadError
+                ? "Team"
+                : `${members.length} member${members.length === 1 ? "" : "s"}`}
           </h3>
         </div>
 
@@ -216,6 +240,25 @@ export function TeamView() {
               <div key={i} className="h-10 animate-pulse rounded bg-surface-2" />
             ))}
           </div>
+        ) : loadError ? (
+          <EmptyState
+            icon={ShieldAlert}
+            title={
+              loadError.kind === "permission"
+                ? "Permission required"
+                : "Unable to load team members"
+            }
+            description={
+              loadError.kind === "permission" ? loadError.message : "Please try again."
+            }
+            action={
+              loadError.kind === "network" ? (
+                <Button size="sm" variant="outline" onClick={load}>
+                  Retry
+                </Button>
+              ) : undefined
+            }
+          />
         ) : members.length === 0 ? (
           <EmptyState
             icon={Users}
