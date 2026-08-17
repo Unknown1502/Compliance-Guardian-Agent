@@ -62,6 +62,18 @@ function formatBytes(n: number): string {
 function AllowanceBanner({ entitlement }: { entitlement: Entitlement | null }) {
   if (!entitlement) return null;
 
+  if (entitlement.state === "admin_unrestricted") {
+    return (
+      <div className="mb-5 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-line bg-surface-2 px-4 py-3 text-[13px] text-ink-2">
+        <span className="font-medium text-ink">Platform admin — unrestricted</span>
+        <span className="text-muted">
+          · {entitlement.consumed} used / {entitlement.granted} granted on this workspace, not
+          enforced for you
+        </span>
+      </div>
+    );
+  }
+
   if (entitlement.state !== "payment_required") {
     const isFree = entitlement.source === "free";
     return (

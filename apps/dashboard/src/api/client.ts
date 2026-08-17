@@ -187,7 +187,7 @@ export interface ProviderOption {
 }
 
 export interface Entitlement {
-  /** free_report_available | paid_report_available | payment_required */
+  /** free_report_available | paid_report_available | payment_required | admin_unrestricted */
   state: string;
   /** free | single | pro — a one-time buyer is never described as Pro. */
   source: string;

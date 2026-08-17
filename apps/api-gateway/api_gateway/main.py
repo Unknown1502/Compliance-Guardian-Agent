@@ -30,6 +30,7 @@ from auth_middleware import (
     create_tenant_member,
     create_tenant_owner,
     delete_tenant_member,
+    is_platform_admin,
     require_auth,
     require_role,
     set_api_key_resolver,
@@ -1050,21 +1051,41 @@ def trigger_check(
     # after success: between the check and the write, a second concurrent
     # request could otherwise slip through on the same last allowance. The
     # transaction inside consume_report_entitlement is what makes that safe.
-    try:
-        g.repo.consume_report_entitlement(auth.tenant_id)
-    except EntitlementExhaustedError:
-        # 402, not 403. The caller is perfectly authorised — they have used
-        # what they paid for, and the fix is a purchase rather than a
-        # permission.
-        raise HTTPException(
-            status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail=(
-                "Your report allowance is used up. Buy a single report or "
-                "subscribe to Pro to run another check."
-            ),
-        ) from None
-    except NotFoundError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from None
+    #
+    # Platform admins bypass the entitlement transaction entirely rather than
+    # being granted a large allowance: a large-but-finite number is still an
+    # allowance that can run out mid-investigation, and it would show up
+    # everywhere the entitlement API surfaces (billing screens, the Users
+    # dashboard) as a fake plan. is_platform_admin() checks the same
+    # environment allowlist as the platform console — never auth.role, which
+    # is the tenant-level 'admin' any tenant owner can hand a teammate via
+    # POST /api/team and would otherwise be a free, self-service bypass of
+    # the entire billing model.
+    if is_platform_admin(auth):
+        g.auditor.log(
+            tenant_id=auth.tenant_id,
+            actor=f"platform_admin:{auth.email or auth.uid}",
+            action="platform.entitlement_bypassed",
+            dedup_key=f"{auth.tenant_id}:{req.document_id}:{datetime.now(timezone.utc).isoformat()}",
+            before_state=None,
+            after_state={"document_id": req.document_id, "reason": "platform admin check"},
+        )
+    else:
+        try:
+            g.repo.consume_report_entitlement(auth.tenant_id)
+        except EntitlementExhaustedError:
+            # 402, not 403. The caller is perfectly authorised — they have
+            # used what they paid for, and the fix is a purchase rather than
+            # a permission.
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail=(
+                    "Your report allowance is used up. Buy a single report or "
+                    "subscribe to Pro to run another check."
+                ),
+            ) from None
+        except NotFoundError:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from None
 
     try:
         task = svc.create_and_dispatch(
@@ -1095,7 +1116,7 @@ class EntitlementResponse(BaseModel):
     decides; the UI displays.
     """
 
-    state: str  # free_report_available | paid_report_available | payment_required
+    state: str  # free_report_available | paid_report_available | payment_required | admin_unrestricted
     source: str  # free | single | pro
     granted: int
     consumed: int
@@ -1119,7 +1140,14 @@ def get_entitlement(auth: AuthContext = Depends(require_auth)) -> EntitlementRes
         if hasattr(tenant.entitlement_source, "value")
         else str(tenant.entitlement_source)
     )
-    if remaining <= 0:
+    if is_platform_admin(auth):
+        # The real numbers still ride along below — this is about not
+        # blocking, never about hiding usage. trigger_check bypasses the
+        # transaction outright for this same allowlist, so reporting
+        # "payment_required" here whenever a tenant is genuinely exhausted
+        # would show a paywall the backend does not actually enforce.
+        state = "admin_unrestricted"
+    elif remaining <= 0:
         state = "payment_required"
     elif source == "free":
         state = "free_report_available"
