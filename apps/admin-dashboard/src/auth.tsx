@@ -20,6 +20,7 @@ import { initializeApp } from "firebase/app";
 import {
   getAuth,
   onAuthStateChanged,
+  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signOut as fbSignOut,
   type User,
@@ -44,6 +45,14 @@ interface AuthState {
   getToken: () => Promise<string>;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
+  /**
+   * Triggers Firebase's own reset-email flow for a customer, by email —
+   * never by touching a password. Uses this console's own Firebase client
+   * instance, which is deliberately the same project as the customer app, so
+   * this is the identical mechanism a customer gets from their own "Forgot
+   * password?" link, not a parallel admin-only reset path.
+   */
+  sendUserPasswordReset: (email: string) => Promise<void>;
 }
 
 const Ctx = createContext<AuthState | undefined>(undefined);
@@ -96,9 +105,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setError(null);
   }, []);
 
+  const sendUserPasswordReset = useCallback(async (email: string) => {
+    await sendPasswordResetEmail(auth, email);
+  }, []);
+
   const value = useMemo(
-    () => ({ phase, user, admin, error, getToken, signIn, signOut }),
-    [phase, user, admin, error, getToken, signIn, signOut],
+    () => ({ phase, user, admin, error, getToken, signIn, signOut, sendUserPasswordReset }),
+    [phase, user, admin, error, getToken, signIn, signOut, sendUserPasswordReset],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

@@ -12,14 +12,20 @@
                        (CG_PLATFORM_ADMIN_UIDS), never from a role. Roles are
                        handed out by POST /api/team, so a "founder" role could
                        be minted by any tenant owner inviting themselves.
-                     - It can control ACCESS. It can never alter RECORDS.
-                       The single cross-tenant write is suspending or
-                       restoring a workspace's access; there is no path here
-                       that changes a document, a verdict, or an audit entry.
-                       A console able to rewrite compliance history would be a
+                     - It can control ACCESS (suspend/restore a workspace,
+                       disable/enable a user, change a user's role) and it can
+                       trigger the SAME processing pipeline a tenant can
+                       trigger for themselves (re-run extraction, re-run a
+                       compliance check) for troubleshooting. Both of those
+                       only ever produce NEW records — a new check, a new
+                       task — with their own id and their own audit entry.
+                       There is no path here, anywhere, that edits or deletes
+                       an existing document, verdict, or audit entry. A
+                       console able to rewrite compliance history would be a
                        liability in a product whose whole claim is that
                        history cannot be rewritten — but one unable to stop an
-                       abusive or non-paying tenant is merely incomplete.
+                       abusive tenant, or to re-run a stuck pipeline for a
+                       confused customer, is merely incomplete.
                      - Every request is written to the append-only audit trail
                        before the data is returned. The product's promise is
                        that every access is accountable; the operator's own
@@ -44,8 +50,9 @@ from auth_middleware import (
 )
 from api_gateway.composition import RULESETS_ROOT
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from gcp_clients.firestore_repo import NotFoundError, TenantMismatchError
 from pydantic import BaseModel, Field
-from schema_validators import RulesetNotFoundError, load_ruleset
+from schema_validators import RulesetNotFoundError, TaskType, load_ruleset
 
 logger = logging.getLogger("cg.gateway.admin")
 
@@ -299,6 +306,13 @@ class UserRoleResponse(BaseModel):
     uid: str
     role: str
     changed: bool
+
+
+class DocumentReprocessResponse(BaseModel):
+    document_id: str
+    tenant_id: str
+    task_id: str
+    task_type: str
 
 
 class PlatformRule(BaseModel):
@@ -1401,6 +1415,108 @@ def build_admin_router(gw) -> APIRouter:
             req.reason,
         )
         return UserRoleResponse(uid=uid, role=req.role, changed=True)
+
+    # -----------------------------------------------------------------------
+    # Platform: document reprocessing. Dispatches the SAME pipeline a tenant
+    # triggers for themselves (see /api/documents and /api/compliance/checks
+    # in main.py) — never a parallel admin-only code path that could drift
+    # from what customers actually get. Both actions only ever create a new
+    # task and a new record; neither can edit or delete what already exists.
+    # tenant_id is required explicitly rather than resolved by scanning every
+    # tenant for the document: an operator only ever reaches this action from
+    # a tenant-scoped view that already knows it (Documents, or a tenant
+    # detail page), so there is never a real guess to make.
+    # -----------------------------------------------------------------------
+
+    @router.post(
+        "/platform/documents/{document_id}/retry-extraction",
+        response_model=DocumentReprocessResponse,
+    )
+    def platform_retry_extraction(
+        document_id: str = Path(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$"),
+        tenant_id: str = Query(min_length=1, max_length=128),
+        auth: AuthContext = Depends(require_platform_admin),
+    ) -> DocumentReprocessResponse:
+        """Re-run field extraction for one document."""
+        g = gw()
+        try:
+            g.repo.get_document(document_id, tenant_id)
+        except (NotFoundError, TenantMismatchError):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from None
+
+        try:
+            svc = g.task_service()
+            task = svc.create_and_dispatch(
+                task_type=TaskType.INGEST, target_ref=document_id, tenant_id=tenant_id
+            )
+        except Exception as exc:
+            logger.exception(
+                "platform retry-extraction dispatch failed for %s/%s", tenant_id, document_id
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="ingestion pipeline temporarily unavailable",
+            ) from exc
+
+        g.auditor.log(
+            tenant_id=tenant_id,
+            actor=f"platform_admin:{auth.email or auth.uid}",
+            action="platform.document_extraction_retried",
+            dedup_key=f"{tenant_id}:{document_id}:{task.task_id}",
+            before_state=None,
+            after_state={"document_id": document_id, "task_id": task.task_id},
+        )
+        return DocumentReprocessResponse(
+            document_id=document_id, tenant_id=tenant_id, task_id=task.task_id, task_type="ingest"
+        )
+
+    @router.post(
+        "/platform/documents/{document_id}/reanalyze",
+        response_model=DocumentReprocessResponse,
+    )
+    def platform_reanalyze_document(
+        document_id: str = Path(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$"),
+        tenant_id: str = Query(min_length=1, max_length=128),
+        auth: AuthContext = Depends(require_platform_admin),
+    ) -> DocumentReprocessResponse:
+        """Re-run the compliance check for one document.
+
+        Bypasses report entitlement the same way trigger_check does for a
+        platform admin in main.py, for the same reason: a re-run initiated to
+        debug a customer's problem is not a purchase, and should never
+        silently consume the allowance they paid for.
+        """
+        g = gw()
+        try:
+            g.repo.get_document(document_id, tenant_id)
+        except (NotFoundError, TenantMismatchError):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from None
+
+        try:
+            svc = g.task_service()
+            task = svc.create_and_dispatch(
+                task_type=TaskType.CHECK, target_ref=document_id, tenant_id=tenant_id
+            )
+        except Exception as exc:
+            logger.exception(
+                "platform reanalyze dispatch failed for %s/%s", tenant_id, document_id
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="compliance pipeline temporarily unavailable",
+            ) from exc
+
+        g.auditor.log(
+            tenant_id=tenant_id,
+            actor=f"platform_admin:{auth.email or auth.uid}",
+            action="platform.document_reanalyzed",
+            dedup_key=f"{tenant_id}:{document_id}:{task.task_id}",
+            before_state=None,
+            after_state={"document_id": document_id, "task_id": task.task_id},
+        )
+        return DocumentReprocessResponse(
+            document_id=document_id, tenant_id=tenant_id, task_id=task.task_id, task_type="check"
+        )
 
     @router.get("/platform/system", response_model=list[ServiceStatus])
     def platform_system(

@@ -234,6 +234,13 @@ export interface UserRoleResult {
   changed: boolean;
 }
 
+export interface DocumentReprocessResult {
+  document_id: string;
+  tenant_id: string;
+  task_id: string;
+  task_type: string;
+}
+
 export interface UsersQuery {
   limit?: number;
   offset?: number;
@@ -371,4 +378,16 @@ export const api = {
       role,
       reason,
     }),
+  retryExtraction: (t: TokenFn, documentId: string, tenantId: string) =>
+    post<DocumentReprocessResult>(
+      t,
+      `/api/platform/documents/${encodeURIComponent(documentId)}/retry-extraction?tenant_id=${encodeURIComponent(tenantId)}`,
+      {},
+    ),
+  reanalyzeDocument: (t: TokenFn, documentId: string, tenantId: string) =>
+    post<DocumentReprocessResult>(
+      t,
+      `/api/platform/documents/${encodeURIComponent(documentId)}/reanalyze?tenant_id=${encodeURIComponent(tenantId)}`,
+      {},
+    ),
 };

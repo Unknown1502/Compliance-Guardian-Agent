@@ -461,6 +461,55 @@ export function TenantDetailSection() {
 
 // --------------------------------------------------------------- Documents
 
+function DocumentActions({ doc }: { doc: DocumentRow }) {
+  const { getToken } = useAuth();
+  const [busy, setBusy] = useState<"extraction" | "check" | null>(null);
+  const [result, setResult] = useState<string | null>(null);
+
+  const run = async (kind: "extraction" | "check") => {
+    const verb = kind === "extraction" ? "retry extraction for" : "re-run the compliance check for";
+    if (!window.confirm(`Reprocess this document — ${verb} ${doc.filename || doc.document_id}?`)) {
+      return;
+    }
+    setBusy(kind);
+    setResult(null);
+    try {
+      const res =
+        kind === "extraction"
+          ? await api.retryExtraction(getToken, doc.document_id, doc.tenant_id)
+          : await api.reanalyzeDocument(getToken, doc.document_id, doc.tenant_id);
+      setResult(`Task ${res.task_id} dispatched`);
+    } catch (e) {
+      setResult(e instanceof ApiError ? e.message : (e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="flex flex-col items-start gap-1">
+      <div className="flex gap-2 whitespace-nowrap">
+        <button
+          onClick={() => run("extraction")}
+          disabled={busy !== null}
+          className="text-2xs text-accent hover:underline disabled:opacity-40"
+        >
+          {busy === "extraction" ? "Retrying…" : "Retry extraction"}
+        </button>
+        <span className="text-faint">·</span>
+        <button
+          onClick={() => run("check")}
+          disabled={busy !== null}
+          className="text-2xs text-accent hover:underline disabled:opacity-40"
+        >
+          {busy === "check" ? "Running…" : "Re-run analysis"}
+        </button>
+      </div>
+      {result && <span className="text-2xs text-faint">{result}</span>}
+    </div>
+  );
+}
+
 function DocumentTable({ rows, hideTenant }: { rows: DocumentRow[]; hideTenant?: boolean }) {
   if (rows.length === 0) return <Empty>No documents.</Empty>;
   return (
@@ -475,6 +524,7 @@ function DocumentTable({ rows, hideTenant }: { rows: DocumentRow[]; hideTenant?:
             <th>Decision</th>
             <th>Rules cited</th>
             <th>Uploaded</th>
+            <th>Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -494,6 +544,9 @@ function DocumentTable({ rows, hideTenant }: { rows: DocumentRow[]; hideTenant?:
               <td>{d.decision ? <Status status={d.decision} /> : <span className="text-faint">—</span>}</td>
               <td className="num text-fg-dim">{d.citations.length || "—"}</td>
               <td className="text-faint">{ago(d.created_at)}</td>
+              <td>
+                <DocumentActions doc={d} />
+              </td>
             </tr>
           ))}
         </tbody>
@@ -1193,7 +1246,8 @@ export function UsersSection() {
 
 export function UserDetailSection() {
   const { uid } = useParams<{ uid: string }>();
-  const { getToken } = useAuth();
+  const { getToken, sendUserPasswordReset } = useAuth();
+  const [resetState, setResetState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [data, setData] = useState<PlatformUserDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1327,6 +1381,30 @@ export function UserDetailSection() {
               >
                 {data.disabled ? "Enable user" : "Disable user"}
               </button>
+            </div>
+            <div>
+              <div className="mb-1 text-fg-dim">Account support</div>
+              <button
+                onClick={async () => {
+                  setResetState("sending");
+                  try {
+                    await sendUserPasswordReset(data.email);
+                    setResetState("sent");
+                  } catch {
+                    setResetState("error");
+                  }
+                }}
+                disabled={resetState === "sending"}
+                className="rounded-lg border border-line px-3 py-1.5 text-sm text-fg-dim transition-colors hover:bg-raised disabled:opacity-50"
+              >
+                {resetState === "sending" ? "Sending…" : "Send password reset"}
+              </button>
+              {resetState === "sent" && (
+                <p className="mt-1.5 text-2xs text-ok">Reset email sent to {data.email}.</p>
+              )}
+              {resetState === "error" && (
+                <p className="mt-1.5 text-2xs text-crit">Could not send the reset email.</p>
+              )}
             </div>
             <div>
               <div className="mb-1 text-fg-dim">Role</div>
