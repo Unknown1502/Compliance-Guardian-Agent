@@ -172,7 +172,6 @@ def render_report_pdf(
     stats: dict,
     gemini_data: dict,
     used_fixture: bool,
-    model_name: str,
     prompt_version: str,
     generated_at: datetime | None = None,
 ) -> bytes:
@@ -256,7 +255,6 @@ def render_report_pdf(
         ("Regulatory framework", tenant.framework),
         ("Reporting period", _fmt_period(period_start, period_end)),
         ("Prepared by", "ComplianceGuardian — automated assessment"),
-        ("Analysis model", model_name),
         ("Ruleset revision", prompt_version),
         ("Generated (UTC)", generated.strftime("%Y-%m-%d %H:%M:%S")),
         ("Classification", "Confidential — for internal and regulatory use"),
@@ -440,8 +438,7 @@ def render_report_pdf(
         Spacer(1, 5),
         Paragraph(
             f"End of report &nbsp;·&nbsp; {esc(report_id)} &nbsp;·&nbsp; "
-            f"generated {generated.strftime('%Y-%m-%d %H:%M:%S')} UTC by ComplianceGuardian "
-            f"({esc(model_name)})",
+            f"generated {generated.strftime('%Y-%m-%d %H:%M:%S')} UTC by ComplianceGuardian",
             ParagraphStyle("cgEnd", parent=small, fontSize=7.5, textColor=colors.HexColor(FAINT)),
         ),
     ]

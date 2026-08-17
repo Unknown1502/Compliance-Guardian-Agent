@@ -11,9 +11,6 @@ import {
   Lock,
   Database,
   ScrollText,
-  Cpu,
-  Cloud,
-  Flame,
 } from "lucide-react";
 
 const NAV_LINKS = [
@@ -31,7 +28,7 @@ const STEPS = [
   },
   {
     icon: ScanSearch,
-    title: "Gemini extracts and reasons",
+    title: "AI extracts and reasons",
     body: "Structured fields are extracted, then evaluated against your active ruleset — every rule, every time, with a plain-language explanation for each.",
   },
   {
@@ -73,7 +70,7 @@ const FAQ = [
   },
   {
     q: "Can the risk score be wrong?",
-    a: "Gemini's reasoning can be uncertain, and the system is built around that: when a rule can't be confidently evaluated from the extracted data, it's marked 'uncertain,' not guessed. Uncertain and failing rules both route to a human reviewer above your risk threshold.",
+    a: "The AI's reasoning can be uncertain, and the system is built around that: when a rule can't be confidently evaluated from the extracted data, it's marked 'uncertain,' not guessed. Uncertain and failing rules both route to a human reviewer above your risk threshold.",
   },
   {
     q: "What rulesets are supported today?",
@@ -173,8 +170,8 @@ export function LandingPage() {
               Compliance automation that never compromises accountability.
             </h1>
             <p className="mx-auto mt-6 max-w-xl text-body text-ink-2">
-              Upload contracts, invoices, policies, or compliance documents. Gemini analyzes
-              every document, cites the applicable rules, calculates risk, and routes high-risk
+              Upload contracts, invoices, policies, or compliance documents. ComplianceGuardian
+              analyzes every document, cites the applicable rules, calculates risk, and routes high-risk
               findings to human reviewers — creating a complete, immutable audit trail.
             </p>
             <div className="mt-8 flex items-center justify-center gap-3">
@@ -218,24 +215,6 @@ export function LandingPage() {
         </div>
       </section>
 
-      {/* Built on */}
-      <div className="border-b border-line bg-surface-2 py-8">
-        <div className="mx-auto flex max-w-container flex-wrap items-center justify-center gap-x-10 gap-y-3 px-6">
-          <span className="eyebrow">Built on</span>
-          {[
-            { icon: Cpu, label: "Gemini API" },
-            { icon: Cloud, label: "Cloud Run" },
-            { icon: Database, label: "Firestore + BigQuery" },
-            { icon: Flame, label: "Firebase Auth" },
-          ].map((t) => (
-            <span key={t.label} className="inline-flex items-center gap-1.5 text-[13px] font-medium text-ink-2">
-              <t.icon size={14} />
-              {t.label}
-            </span>
-          ))}
-        </div>
-      </div>
-
       {/* How it works */}
       <Section
         id="product"
@@ -264,7 +243,7 @@ export function LandingPage() {
         surface="surface-2"
         eyebrow="Architecture"
         title="A real pipeline, not a chat wrapper"
-        subtitle="Every stage below is a separate, independently deployed Cloud Run service."
+        subtitle="Every stage below is a separate, independently deployed service."
       >
         <div className="mx-auto mt-14 max-w-2xl overflow-x-auto">
           <div className="flex min-w-[640px] items-stretch gap-0 text-center text-[12.5px] font-medium">
@@ -273,7 +252,7 @@ export function LandingPage() {
               "API Gateway",
               "Ingestion Agent",
               "Compliance Agent",
-              "Firestore + BigQuery",
+              "Secure Storage",
             ].map((n, i, arr) => (
               <div key={n} className="flex items-center">
                 <div className="rounded-lg border border-line bg-surface px-4 py-3 text-ink shadow-soft">
@@ -313,8 +292,8 @@ export function LandingPage() {
         id="pricing"
         surface="surface-2"
         eyebrow="Pricing"
-        title="Your first audit is free"
-        subtitle="After that, pay per audit or move to continuous checks. No setup fee, no lock-in."
+        title="Start with one audit, or go continuous"
+        subtitle="Pay once for a single audit, or move to continuous checks. No setup fee, no lock-in."
       >
         <div className="mx-auto mt-14 grid max-w-xl gap-5 sm:grid-cols-2">
           {/* Prices mirror shared/payments/_DEFAULT_PRICES, which is what the
@@ -332,7 +311,7 @@ export function LandingPage() {
               One more document, one more risk-scored, cited compliance check.
             </p>
             <ul className="mt-3 space-y-1 text-[13px] text-ink-2">
-              <li>✓ Full Gemini extraction + risk score</li>
+              <li>✓ AI extraction + risk score</li>
               <li>✓ Cited rule verdicts</li>
               <li>✓ Added to your audit trail</li>
             </ul>
@@ -348,7 +327,7 @@ export function LandingPage() {
             </p>
             <ul className="mt-3 space-y-1 text-[13px] text-ink-2">
               <li>✓ Continuous compliance checks</li>
-              <li>✓ Gemini extraction + risk scoring</li>
+              <li>✓ AI extraction + risk scoring</li>
               <li>✓ Cited compliance verdicts</li>
               <li>✓ Audit trail</li>
               <li>✓ Weekly AI compliance reports</li>

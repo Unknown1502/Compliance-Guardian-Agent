@@ -98,7 +98,7 @@ export function RemediationChecklist({ checkId }: { checkId: string }) {
           !plan.used_fixture ? (
             <span className="inline-flex items-center gap-1 text-[11px] font-medium text-status-good">
               <Sparkles size={11} />
-              Gemini
+              AI-generated
             </span>
           ) : undefined
         }

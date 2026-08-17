@@ -23,7 +23,7 @@ const PLANS = [
     title: "Single audit",
     description: "One more document, one more risk-scored, cited compliance check.",
     features: [
-      "Full Gemini extraction + risk score",
+      "AI extraction + risk score",
       "Cited rule verdicts",
       "Added to your audit trail",
     ],
@@ -38,7 +38,7 @@ const PLANS = [
     // not deliver — and it is the kind of promise a customer quotes back.
     features: [
       "Continuous compliance checks",
-      "Weekly Gemini-authored reports",
+      "Weekly AI-authored reports",
       "Report downloads",
       "Team/Owner workflows",
       "Cancel any time · fair-use policy applies",
