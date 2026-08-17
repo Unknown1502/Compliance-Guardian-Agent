@@ -38,12 +38,13 @@ const FIELD =
 const LABEL = "mb-1.5 block text-[13px] font-medium text-slate-700 dark:text-slate-300";
 
 export function Login({ initialMode = "signin" }: { initialMode?: "signin" | "signup" }) {
-  const { devSignIn, firebaseSignIn } = useAuth();
+  const { devSignIn, firebaseSignIn, requestPasswordReset } = useAuth();
   const [tenantId, setTenantId] = useState(DEMO_TENANTS[0].id);
   const [role, setRole] = useState<Role>("owner");
-  const [mode, setMode] = useState<"signin" | "signup">(initialMode);
+  const [mode, setMode] = useState<"signin" | "signup" | "reset">(initialMode);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [resetSent, setResetSent] = useState(false);
   const [businessName, setBusinessName] = useState("");
   const [jobTitle, setJobTitle] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -104,6 +105,22 @@ export function Login({ initialMode = "signin" }: { initialMode?: "signin" | "si
               : err.message
           : (err as Error).message,
       );
+      setBusy(false);
+    }
+  };
+
+  const handleReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setBusy(true);
+    try {
+      await requestPasswordReset(email);
+      // Shown regardless of whether the account exists — requestPasswordReset
+      // already collapses that distinction, this just renders the one state.
+      setResetSent(true);
+    } catch (err) {
+      setError((err as Error).message || "Something went wrong. Try again.");
+    } finally {
       setBusy(false);
     }
   };
@@ -172,6 +189,67 @@ export function Login({ initialMode = "signin" }: { initialMode?: "signin" | "si
               <Button onClick={handleDev} loading={busy} size="lg" className="w-full">
                 Enter dashboard
               </Button>
+            </div>
+          ) : mode === "reset" ? (
+            <div className="space-y-4">
+              {resetSent ? (
+                <div className="space-y-4">
+                  <div>
+                    <h1 className="text-[24px] font-bold tracking-tight text-slate-900 dark:text-slate-50">
+                      Check your email
+                    </h1>
+                    <p className="mt-1.5 text-[13.5px] leading-relaxed text-slate-500 dark:text-slate-400">
+                      If an account exists for {email || "that address"}, a password reset link
+                      has been sent.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode("signin");
+                      setResetSent(false);
+                      setError(null);
+                    }}
+                    className="w-full pt-1 text-center text-[13px] text-slate-500 transition-colors hover:text-brand-700 dark:text-slate-400"
+                  >
+                    <span className="font-medium text-brand-600">Back to sign in</span>
+                  </button>
+                </div>
+              ) : (
+                <form onSubmit={handleReset} className="space-y-4">
+                  <div className="mb-6">
+                    <h1 className="text-[24px] font-bold tracking-tight text-slate-900 dark:text-slate-50">
+                      Reset your password
+                    </h1>
+                    <p className="mt-1.5 text-[13.5px] text-slate-500 dark:text-slate-400">
+                      Enter your email and we&rsquo;ll send you a reset link.
+                    </p>
+                  </div>
+                  <label className="block">
+                    <span className={LABEL}>Email</span>
+                    <input
+                      type="email"
+                      placeholder="you@provider.com.au"
+                      className={FIELD}
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                    />
+                  </label>
+                  <Button type="submit" loading={busy} size="lg" className="!mt-5 w-full">
+                    Send reset link
+                  </Button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode("signin");
+                      setError(null);
+                    }}
+                    className="w-full pt-1 text-center text-[13px] text-slate-500 transition-colors hover:text-brand-700 dark:text-slate-400"
+                  >
+                    <span className="font-medium text-brand-600">Back to sign in</span>
+                  </button>
+                </form>
+              )}
             </div>
           ) : (
             <form onSubmit={handleFirebase} className="space-y-4">
@@ -278,6 +356,20 @@ export function Login({ initialMode = "signin" }: { initialMode?: "signin" | "si
                   onChange={(e) => setPassword(e.target.value)}
                 />
               </label>
+
+              {mode === "signin" && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode("reset");
+                    setResetSent(false);
+                    setError(null);
+                  }}
+                  className="-mt-2 block text-right text-[12.5px] text-slate-500 transition-colors hover:text-brand-700 dark:text-slate-400"
+                >
+                  Forgot password?
+                </button>
+              )}
 
               <Button
                 type="submit"

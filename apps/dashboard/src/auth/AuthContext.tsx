@@ -16,6 +16,7 @@ import {
 import {
   onAuthStateChanged,
   sendEmailVerification,
+  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signOut as fbSignOut,
 } from "firebase/auth";
@@ -33,6 +34,13 @@ interface AuthState {
   resendVerification: () => Promise<void>;
   /** Re-read the user from Firebase so a just-clicked link reflects immediately. */
   refreshVerification: () => Promise<void>;
+  /**
+   * Always resolves — never reveals whether the email has an account. The
+   * caller shows the same "if an account exists..." message on every
+   * successful resolution; the account-enumeration protection lives here,
+   * not in the UI, so it can't be bypassed by a future screen that forgets.
+   */
+  requestPasswordReset: (email: string) => Promise<void>;
 }
 
 const AuthCtx = createContext<AuthState | undefined>(undefined);
@@ -141,6 +149,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     );
   }, []);
 
+  const requestPasswordReset = useCallback(async (email: string) => {
+    try {
+      // No custom actionCodeSettings: the reset link goes to Firebase's own
+      // hosted action page, which collects and confirms the new password
+      // itself. That is the "use the existing provider's mechanism, not a
+      // custom insecure password-reset system" requirement satisfied by
+      // construction — there is no custom "enter new password" screen here
+      // for a bug to hide in.
+      await sendPasswordResetEmail(firebaseAuth(), email);
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      // auth/user-not-found is the one error shape that would let a caller
+      // tell "no such account" apart from "sent" — exactly the enumeration
+      // this flow must not allow, regardless of the project's own Email
+      // Enumeration Protection setting. Anything else (rate limit, network,
+      // malformed email) is a real condition worth surfacing.
+      if (code === "auth/user-not-found") return;
+      throw err;
+    }
+  }, []);
+
   const signOut = useCallback(async () => {
     if (AUTH_MODE === "dev") {
       localStorage.removeItem(DEV_SESSION_KEY);
@@ -159,6 +188,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signOut,
       resendVerification,
       refreshVerification,
+      requestPasswordReset,
     }),
     [
       session,
@@ -168,6 +198,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signOut,
       resendVerification,
       refreshVerification,
+      requestPasswordReset,
     ],
   );
 
