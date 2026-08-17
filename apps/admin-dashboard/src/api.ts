@@ -108,6 +108,9 @@ export interface TenantRow {
   name: string;
   industry: string;
   jurisdiction: string;
+  /** Empty on tenants created before this field existed — render as-is. */
+  country_code: string;
+  country_name: string;
   plan_tier: string;
   created_at: string;
   members: number;

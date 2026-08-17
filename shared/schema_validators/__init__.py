@@ -63,6 +63,15 @@ from schema_validators.rulesets import (
     load_ruleset,
     load_ruleset_file,
 )
+from schema_validators.countries import (
+    COUNTRIES,
+    COUNTRY_BY_ALPHA2,
+    COUNTRY_TO_JURISDICTION,
+    Country,
+    country_name,
+    is_valid_country_code,
+    resolve_jurisdiction,
+)
 
 __all__ = [
     "AuditLogRow",
@@ -105,4 +114,11 @@ __all__ = [
     "available_rulesets",
     "load_ruleset",
     "load_ruleset_file",
+    "COUNTRIES",
+    "COUNTRY_BY_ALPHA2",
+    "COUNTRY_TO_JURISDICTION",
+    "Country",
+    "country_name",
+    "is_valid_country_code",
+    "resolve_jurisdiction",
 ]

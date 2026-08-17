@@ -106,7 +106,20 @@ class Tenant(StrictModel):
     tenant_id: str = Field(min_length=1)
     name: str = Field(min_length=1)
     industry: str = Field(min_length=1)
+    # Which ruleset file is loaded (rulesets/<industry>/<jurisdiction>.yaml).
+    # Kept separate from country_code below on purpose: this is the ONLY
+    # field the compliance engine reads, and country is not always a 1:1
+    # match to it (every EU country resolves to jurisdiction "eu").
     jurisdiction: str = Field(min_length=1)
+    # ISO 3166-1 alpha-2 and the display name it resolves to, via
+    # schema_validators.countries. Empty on tenants created before this
+    # field existed — deliberately not backfilled by guessing from
+    # `jurisdiction`, which is a many-to-one mapping (several countries can
+    # share "eu") and not always safely reversible. An empty country_code
+    # reads as "not yet recorded," which is honest; a guessed one would not
+    # be.
+    country_code: str = Field(default="", max_length=2)
+    country_name: str = Field(default="", max_length=100)
     plan_tier: PlanTier = PlanTier.FREE
     created_at: datetime = Field(default_factory=utcnow)
 

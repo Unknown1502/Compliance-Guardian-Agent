@@ -152,6 +152,12 @@ class PlatformTenantRow(BaseModel):
     name: str
     industry: str
     jurisdiction: str
+    # Empty on tenants created before this field existed — shown as-is
+    # (blank), never guessed from jurisdiction, which is a many-to-one
+    # mapping (several countries share "eu") and not always safely
+    # reversible.
+    country_code: str = ""
+    country_name: str = ""
     plan_tier: str
     created_at: str
     # active | suspended. Access state, not compliance state — a suspended
@@ -654,6 +660,8 @@ def build_admin_router(gw) -> APIRouter:
                     name=t.name,
                     industry=t.industry,
                     jurisdiction=t.jurisdiction,
+                    country_code=t.country_code,
+                    country_name=t.country_name,
                     plan_tier=plan,
                     created_at=_iso(t.created_at),
                     members=len(members),

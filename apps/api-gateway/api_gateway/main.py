@@ -62,6 +62,7 @@ from gcp_clients.firestore_repo import (
 from google.cloud import bigquery
 from pydantic import BaseModel, Field
 from schema_validators import (
+    COUNTRIES,
     ApiKeyRecord,
     Document,
     DocumentStatus,
@@ -75,7 +76,10 @@ from schema_validators import (
     Tenant,
     TenantUser,
     available_rulesets,
+    country_name as _country_name,
+    is_valid_country_code,
     load_ruleset,
+    resolve_jurisdiction,
 )
 
 from api_gateway.admin_routes import build_admin_router
@@ -313,8 +317,20 @@ class SignupRequest(StrictRequest):
     password: str = Field(min_length=8, max_length=4096)
     business_name: str = Field(min_length=1, max_length=200)
     job_title: str = Field(default="", max_length=120)
-    industry: str = Field(default="healthcare_ndis", pattern=_RULESET_TOKEN_PATTERN)
-    jurisdiction: str = Field(default="AU", pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    # No defaults on either of these, deliberately. industry used to default
+    # to "healthcare_ndis" and jurisdiction to "AU" — a real, loadable
+    # ruleset pair, so a request that omitted them would never fail
+    # load_ruleset() and would silently create a correctly-functioning but
+    # wrong-country tenant with no error anywhere. Required fields turn that
+    # into an immediate 422, which is the only safe behavior.
+    industry: str = Field(pattern=_RULESET_TOKEN_PATTERN)
+    # ISO 3166-1 alpha-2. jurisdiction is no longer accepted from the client
+    # at all — the server resolves it from this via
+    # schema_validators.resolve_jurisdiction(), which is the one place that
+    # mapping is allowed to live. A client-supplied jurisdiction would be
+    # exactly the "accept an arbitrary jurisdiction from the request body"
+    # this architecture exists to rule out.
+    country_code: str = Field(min_length=2, max_length=2, pattern=r"^[A-Za-z]{2}$")
 
 
 class SignupResponse(BaseModel):
@@ -672,6 +688,27 @@ def list_available_rulesets(request: Request) -> list[RulesetOptionResponse]:
     ]
 
 
+class CountryResponse(BaseModel):
+    alpha2: str
+    alpha3: str
+    name: str
+
+
+@app.get("/api/countries", response_model=list[CountryResponse])
+def list_countries(request: Request) -> list[CountryResponse]:
+    """The full ISO 3166-1 list signup's country selector renders.
+
+    Deliberately NOT filtered to only countries with a ruleset. Country is a
+    fact about the business; whether ComplianceGuardian currently covers it
+    is a separate question signup answers only after a country is chosen —
+    conflating the two would just recreate the original bug (a selector that
+    silently narrows itself for reasons the person picking from it cannot
+    see) in a new shape.
+    """
+    _enforce(_standard_limiter, f"countries:{_client_ip(request)}", "country list")
+    return [CountryResponse(alpha2=c.alpha2, alpha3=c.alpha3, name=c.name) for c in COUNTRIES]
+
+
 @app.post("/api/signup", response_model=SignupResponse, status_code=status.HTTP_201_CREATED)
 def signup(req: SignupRequest, request: Request) -> SignupResponse:
     # Two independent gates, because either one alone is bypassable: the
@@ -686,16 +723,45 @@ def signup(req: SignupRequest, request: Request) -> SignupResponse:
             detail="too many attempts for this account; try again shortly",
             headers={"Retry-After": str(max(1, _auth_backoff.retry_after_seconds(account_key)))},
         )
-    # Fail before creating any account/tenant state if we don't have a
-    # ruleset for this industry/jurisdiction — there'd be nothing to check
-    # documents against.
+    # Country is the fact the customer selects; jurisdiction is the ruleset
+    # this resolves to, computed server-side and never trusted from the
+    # client. Both failure modes below are deliberately explicit 400s rather
+    # than any kind of fallback — a signup that can't be correctly
+    # configured must not become one that is silently misconfigured instead.
+    country_code = req.country_code.upper()
+    if not is_valid_country_code(country_code):
+        _auth_backoff.record_failure(account_key)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Please select the country where your business operates.",
+        )
+
+    jurisdiction = resolve_jurisdiction(country_code)
+    if jurisdiction is None:
+        _auth_backoff.record_failure(account_key)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Compliance coverage for {_country_name(country_code)} is not yet "
+                "available. Try Contract review, which supports every country, or "
+                "check back as coverage expands."
+            ),
+        )
+
+    # Fail before creating any account/tenant state if this specific
+    # industry does not cover the resolved jurisdiction — the country itself
+    # can resolve (e.g. India -> in) while a given vertical still has no
+    # ruleset for it (e.g. aged_care only exists for au today).
     try:
-        load_ruleset(RULESETS_ROOT, req.industry, req.jurisdiction)
+        load_ruleset(RULESETS_ROOT, req.industry, jurisdiction)
     except (RulesetNotFoundError, ValueError) as exc:
         _auth_backoff.record_failure(account_key)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"no ruleset for industry={req.industry!r} jurisdiction={req.jurisdiction!r}",
+            detail=(
+                f"Compliance coverage for {_country_name(country_code)} is not yet "
+                f"available for this industry."
+            ),
         ) from exc
 
     tenant_id = f"tenant-{uuid.uuid4().hex[:12]}"
@@ -724,7 +790,9 @@ def signup(req: SignupRequest, request: Request) -> SignupResponse:
         tenant_id=tenant_id,
         name=req.business_name,
         industry=req.industry,
-        jurisdiction=req.jurisdiction,
+        jurisdiction=jurisdiction,
+        country_code=country_code,
+        country_name=_country_name(country_code),
         plan_tier=PlanTier.FREE,
     )
     g.repo.upsert_tenant(tenant)

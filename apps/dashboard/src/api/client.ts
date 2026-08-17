@@ -57,6 +57,22 @@ export async function getAvailableRulesets(): Promise<RulesetOptionRow[]> {
   return jsonOrThrow(await fetch(`${API_BASE_URL}/api/rulesets/available`));
 }
 
+export interface CountryRow {
+  alpha2: string;
+  alpha3: string;
+  name: string;
+}
+
+/**
+ * The full ISO 3166-1 country list, not filtered to what ComplianceGuardian
+ * currently covers — country is a fact about the business, independent of
+ * ruleset coverage. See resolve_jurisdiction() server-side for how a chosen
+ * country turns into (or fails to turn into) a compliance jurisdiction.
+ */
+export async function getCountries(): Promise<CountryRow[]> {
+  return jsonOrThrow(await fetch(`${API_BASE_URL}/api/countries`));
+}
+
 export interface JurisdictionChange {
   industry: string;
   jurisdiction: string;
@@ -90,7 +106,7 @@ export async function signup(
   businessName: string,
   jobTitle: string,
   industry: string,
-  jurisdiction: string,
+  countryCode: string,
 ): Promise<{ tenant_id: string; uid: string; email: string }> {
   const res = await fetch(`${API_BASE_URL}/api/signup`, {
     method: "POST",
@@ -100,10 +116,12 @@ export async function signup(
       password,
       business_name: businessName,
       job_title: jobTitle,
-      // Chosen by the customer, then re-validated server-side against the
-      // rulesets that actually exist — the client cannot invent a pair.
+      // Chosen by the customer, then re-validated server-side. jurisdiction
+      // is deliberately not sent at all — the server resolves it from
+      // country_code via the one authoritative country->jurisdiction
+      // mapping, so the client has no way to submit a mismatched pair.
       industry,
-      jurisdiction,
+      country_code: countryCode,
     }),
   });
   return jsonOrThrow(res);

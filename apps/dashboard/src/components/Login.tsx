@@ -8,11 +8,14 @@ import { cn } from "../lib/cn";
 import {
   ApiError,
   getAvailableRulesets,
+  getCountries,
   signup as signupRequest,
+  type CountryRow,
   type RulesetOptionRow,
 } from "../api/client";
+import { CountrySelect } from "./ui/CountrySelect";
 
-import { INDUSTRY_LABEL, JURISDICTION_LABEL, label } from "../lib/rulesetLabels";
+import { INDUSTRY_LABEL, label } from "../lib/rulesetLabels";
 
 const DEMO_TENANTS = [
   { id: "tenant-sunrise-care", label: "Sunrise Community Care (NDIS)" },
@@ -51,13 +54,18 @@ export function Login({ initialMode = "signin" }: { initialMode?: "signin" | "si
   const [busy, setBusy] = useState(false);
   const [rulesets, setRulesets] = useState<RulesetOptionRow[]>([]);
   const [industry, setIndustry] = useState("");
-  const [jurisdiction, setJurisdiction] = useState("");
+  const [countries, setCountries] = useState<CountryRow[]>([]);
+  // "" means nothing selected. Never pre-filled — country must be an
+  // explicit choice, not an inherited default. See countries.py server-side
+  // for why: the account-creation gap this used to leave (industry and
+  // jurisdiction defaulting to healthcare_ndis/AU when omitted) is exactly
+  // what put every early workspace in Australia regardless of where the
+  // business actually operated.
+  const [countryCode, setCountryCode] = useState("");
 
-  // Loaded on mount so the menu reflects what the server can actually check
-  // documents against. If this call fails the selects stay empty and signup
-  // is blocked rather than silently defaulting — creating a workspace under
-  // the wrong jurisdiction produces confident, cited, wrong verdicts, which
-  // is worse than not creating it at all.
+  // Industry list loaded on mount so it reflects what the server can
+  // actually check documents against; a default industry is fine to
+  // pre-select since it is not the field that was silently defaulting.
   useEffect(() => {
     let live = true;
     getAvailableRulesets()
@@ -65,10 +73,7 @@ export function Login({ initialMode = "signin" }: { initialMode?: "signin" | "si
         if (!live) return;
         setRulesets(rows);
         const first = rows[0];
-        if (first) {
-          setIndustry(first.industry);
-          setJurisdiction(first.jurisdiction);
-        }
+        if (first) setIndustry(first.industry);
       })
       .catch(() => live && setRulesets([]));
     return () => {
@@ -76,9 +81,23 @@ export function Login({ initialMode = "signin" }: { initialMode?: "signin" | "si
     };
   }, []);
 
+  // Countries load independently of industry — the two used to be coupled
+  // (jurisdiction options narrowed to whatever the selected industry had a
+  // ruleset for), which is why the country field could show only Australia
+  // for most industries. Country is a fact about the business; whether
+  // ComplianceGuardian covers the combination is resolved server-side after
+  // both are chosen, not by pre-filtering this list.
+  useEffect(() => {
+    let live = true;
+    getCountries()
+      .then((rows) => live && setCountries(rows))
+      .catch(() => live && setCountries([]));
+    return () => {
+      live = false;
+    };
+  }, []);
+
   const industries = Array.from(new Set(rulesets.map((r) => r.industry)));
-  const jurisdictions = rulesets.filter((r) => r.industry === industry);
-  const selected = jurisdictions.find((r) => r.jurisdiction === jurisdiction);
 
   const handleDev = () => {
     setBusy(true);
@@ -92,7 +111,7 @@ export function Login({ initialMode = "signin" }: { initialMode?: "signin" | "si
     setBusy(true);
     try {
       if (mode === "signup") {
-        await signupRequest(email, password, businessName, jobTitle, industry, jurisdiction);
+        await signupRequest(email, password, businessName, jobTitle, industry, countryCode);
       }
       await firebaseSignIn(email, password);
     } catch (err) {
@@ -295,15 +314,7 @@ export function Login({ initialMode = "signin" }: { initialMode?: "signin" | "si
                       <select
                         className={FIELD}
                         value={industry}
-                        onChange={(e) => {
-                          const next = e.target.value;
-                          setIndustry(next);
-                          // Not every industry covers every jurisdiction, so
-                          // move to a pair that exists rather than leaving a
-                          // combination the server would reject.
-                          const first = rulesets.find((r) => r.industry === next);
-                          if (first) setJurisdiction(first.jurisdiction);
-                        }}
+                        onChange={(e) => setIndustry(e.target.value)}
                       >
                         {industries.map((i) => (
                           <option key={i} value={i}>
@@ -312,27 +323,18 @@ export function Login({ initialMode = "signin" }: { initialMode?: "signin" | "si
                         ))}
                       </select>
                     </label>
-                    <label className="block">
-                      <span className={LABEL}>Where you operate</span>
-                      <select
-                        className={FIELD}
-                        value={jurisdiction}
-                        onChange={(e) => setJurisdiction(e.target.value)}
-                      >
-                        {jurisdictions.map((r) => (
-                          <option key={r.jurisdiction} value={r.jurisdiction}>
-                            {label(JURISDICTION_LABEL, r.jurisdiction)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                    <CountrySelect
+                      countries={countries}
+                      value={countryCode}
+                      onChange={setCountryCode}
+                      disabled={countries.length === 0}
+                      label="Where you operate"
+                    />
                   </div>
                   <span className="-mt-1 block text-[11.5px] text-muted">
                     {rulesets.length === 0
                       ? "Could not load the available rulesets — reload before signing up."
-                      : selected
-                        ? `Your documents will be checked against ${selected.rule_count} rules (v${selected.rule_set_version}). This decides which law applies, so pick where the business actually operates.`
-                        : "Pick the combination that matches your business."}
+                      : "We'll confirm compliance coverage for this country and industry when you sign up."}
                   </span>
                 </>
               )}
@@ -380,7 +382,7 @@ export function Login({ initialMode = "signin" }: { initialMode?: "signin" | "si
                 // Signing up without a resolved industry/jurisdiction would
                 // create a workspace with no ruleset behind it, so the button
                 // waits for the catalogue rather than guessing a default.
-                disabled={mode === "signup" && (!industry || !jurisdiction)}
+                disabled={mode === "signup" && (!industry || !countryCode)}
               >
                 {mode === "signin" ? "Sign in" : "Create account"}
               </Button>

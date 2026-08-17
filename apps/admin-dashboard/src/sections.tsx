@@ -283,6 +283,7 @@ export function TenantsSection() {
                   [
                     ["name", "Tenant"],
                     ["industry", "Industry"],
+                    ["country_name", "Country"],
                     ["jurisdiction", "Juris."],
                     ["plan_tier", "Plan"],
                     ["reports_consumed", "Reports"],
@@ -316,6 +317,9 @@ export function TenantsSection() {
                     </div>
                   </td>
                   <td className="text-fg-dim">{t.industry}</td>
+                  <td className="text-fg-dim">
+                    {t.country_name || <span className="text-faint">not recorded</span>}
+                  </td>
                   <td className="text-fg-dim">{t.jurisdiction}</td>
                   <td className="whitespace-nowrap">
                     <PlanBadge row={t} />
@@ -353,7 +357,7 @@ export function TenantsSection() {
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={11}>
+                  <td colSpan={12}>
                     <Empty>No tenants match.</Empty>
                   </td>
                 </tr>
@@ -430,7 +434,7 @@ export function TenantDetailSection() {
     <div>
       <Head
         title={tenant.name}
-        sub={`${tenant.industry} · ${tenant.jurisdiction} · ${tenant.plan_tier}`}
+        sub={`${tenant.industry} · ${tenant.country_name || "country not recorded"} (${tenant.jurisdiction}) · ${tenant.plan_tier}`}
         right={
           <Link to="/tenants" className="text-sm text-accent hover:underline">
             ← All tenants
