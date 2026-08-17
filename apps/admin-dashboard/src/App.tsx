@@ -12,6 +12,7 @@ import {
   Building2,
   FileText,
   UserCheck,
+  Users,
   Cpu,
   ShieldAlert,
   ScrollText,
@@ -31,6 +32,8 @@ import {
   TenantDetailSection,
   DocumentsSection,
   ReviewsSection,
+  UsersSection,
+  UserDetailSection,
   AgentsSection,
   ComplianceSection,
   RulesetsSection,
@@ -48,6 +51,7 @@ const NAV = [
   { to: "/tenants", label: "Tenants", icon: Building2 },
   { to: "/documents", label: "Documents", icon: FileText },
   { to: "/reviews", label: "Human review", icon: UserCheck },
+  { to: "/users", label: "Users", icon: Users },
   { to: "/agents", label: "AI operations", icon: Cpu },
   { to: "/compliance", label: "Compliance", icon: Gauge },
   { to: "/rulesets", label: "Rulesets", icon: BookMarked },
@@ -302,6 +306,8 @@ function Shell() {
           <Route path="/tenants/:tenantId" element={<TenantDetailSection />} />
           <Route path="/documents" element={<DocumentsSection />} />
           <Route path="/reviews" element={<ReviewsSection />} />
+          <Route path="/users" element={<UsersSection />} />
+          <Route path="/users/:uid" element={<UserDetailSection />} />
           <Route path="/agents" element={<AgentsSection />} />
           <Route path="/compliance" element={<ComplianceSection />} />
           <Route path="/rulesets" element={<RulesetsSection />} />

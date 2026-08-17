@@ -189,6 +189,62 @@ export interface AuditEvent {
   created_at: string;
 }
 
+/**
+ * email/role/job_title/created_at come from Firestore, the source of truth
+ * for display. disabled/email_verified/last_sign_in come from Firebase Auth,
+ * the source of truth for identity — Firestore has neither field, so these
+ * are never fabricated client-side.
+ */
+export interface PlatformUserRow {
+  uid: string;
+  email: string;
+  role: string;
+  job_title: string;
+  tenant_id: string;
+  tenant_name: string;
+  created_at: string;
+  email_verified: boolean;
+  disabled: boolean;
+  last_sign_in: string | null;
+  status: "active" | "disabled" | "pending";
+}
+
+export interface PlatformUsersPage {
+  total: number;
+  limit: number;
+  offset: number;
+  users: PlatformUserRow[];
+}
+
+export interface PlatformUserDetail extends PlatformUserRow {
+  reviews_assigned: number;
+  reviews_decided: number;
+  recent_activity: SecurityEvent[];
+}
+
+export interface UserStatusResult {
+  uid: string;
+  disabled: boolean;
+  changed: boolean;
+}
+
+export interface UserRoleResult {
+  uid: string;
+  role: string;
+  changed: boolean;
+}
+
+export interface UsersQuery {
+  limit?: number;
+  offset?: number;
+  q?: string;
+  role?: string;
+  tenantId?: string;
+  status?: string;
+  sort?: string;
+  direction?: "asc" | "desc";
+}
+
 export interface PlatformRule {
   id: string;
   description: string;
@@ -290,4 +346,29 @@ export const api = {
   ) => put<SupportTicketRow>(t, `/api/platform/support/${ticketId}`, { assigned_to: "", ...patch }),
   audit: (t: TokenFn, limit = 200) =>
     get<{ count: number; events: AuditEvent[] }>(t, `/api/platform/audit?limit=${limit}`),
+  users: (t: TokenFn, params: UsersQuery = {}) => {
+    const sp = new URLSearchParams();
+    if (params.limit) sp.set("limit", String(params.limit));
+    if (params.offset) sp.set("offset", String(params.offset));
+    if (params.q) sp.set("q", params.q);
+    if (params.role) sp.set("role", params.role);
+    if (params.tenantId) sp.set("tenant_id", params.tenantId);
+    if (params.status) sp.set("status", params.status);
+    if (params.sort) sp.set("sort", params.sort);
+    if (params.direction) sp.set("direction", params.direction);
+    const qs = sp.toString();
+    return get<PlatformUsersPage>(t, `/api/platform/users${qs ? `?${qs}` : ""}`);
+  },
+  userDetail: (t: TokenFn, uid: string) =>
+    get<PlatformUserDetail>(t, `/api/platform/users/${encodeURIComponent(uid)}`),
+  setUserStatus: (t: TokenFn, uid: string, disabled: boolean, reason: string) =>
+    put<UserStatusResult>(t, `/api/platform/users/${encodeURIComponent(uid)}/status`, {
+      disabled,
+      reason,
+    }),
+  setUserRole: (t: TokenFn, uid: string, role: string, reason: string) =>
+    put<UserRoleResult>(t, `/api/platform/users/${encodeURIComponent(uid)}/role`, {
+      role,
+      reason,
+    }),
 };

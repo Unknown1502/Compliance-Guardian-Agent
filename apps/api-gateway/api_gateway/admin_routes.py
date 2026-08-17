@@ -233,6 +233,74 @@ class PlatformSecurityEvent(BaseModel):
     category: str
 
 
+class PlatformUserRow(BaseModel):
+    """One person, joined against their real Firebase Auth state.
+
+    email/role/job_title/created_at come from the TenantUser record, which is
+    the source of truth for display. disabled/email_verified/last_sign_in come
+    from Firebase Auth itself, which is the source of truth for identity —
+    Firestore has no status or last-login field, and fabricating one here
+    would be exactly the kind of invented ops number this console refuses to
+    show elsewhere.
+    """
+
+    uid: str
+    email: str
+    role: str
+    job_title: str
+    tenant_id: str
+    tenant_name: str
+    created_at: str
+    email_verified: bool
+    disabled: bool
+    last_sign_in: str | None = None
+    # active | disabled | pending. Pending means Firebase Auth has not yet
+    # verified the email — not a fabricated fourth state.
+    status: str = "active"
+
+
+class PlatformUsersPage(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    users: list[PlatformUserRow]
+
+
+class PlatformUserDetail(PlatformUserRow):
+    # Documents carry no uploader field anywhere in the schema, so "documents
+    # uploaded" per user is not derivable and is deliberately absent here
+    # rather than shown as zero, which would read as a real measurement.
+    reviews_assigned: int
+    reviews_decided: int
+    recent_activity: list[PlatformSecurityEvent]
+
+
+class ChangeUserStatusRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    disabled: bool
+    reason: str = Field(min_length=12, max_length=300)
+
+
+class UserStatusResponse(BaseModel):
+    uid: str
+    disabled: bool
+    changed: bool
+
+
+class ChangeUserRoleRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    role: str = Field(pattern="^(owner|reviewer|admin)$")
+    reason: str = Field(min_length=12, max_length=300)
+
+
+class UserRoleResponse(BaseModel):
+    uid: str
+    role: str
+    changed: bool
+
+
 class PlatformRule(BaseModel):
     id: str
     description: str
@@ -1031,6 +1099,308 @@ def build_admin_router(gw) -> APIRouter:
                 )
             )
         return out
+
+    # -----------------------------------------------------------------------
+    # Platform: users. Read is cross-tenant like everything else here; write
+    # is deliberately as narrow as the tenant-suspend endpoint above — status
+    # and role only, never a record a user produced. No endpoint here moves a
+    # user between tenants: unlike jurisdiction or status, there is no
+    # existing precedent anywhere in this product for what should happen to a
+    # user's document/check history on a cross-tenant move, and inventing
+    # that semantics inside an admin console is a product decision, not an
+    # engineering one.
+    # -----------------------------------------------------------------------
+
+    def _all_tenant_users(g) -> list[tuple]:
+        """Every TenantUser paired with its Tenant, across every workspace.
+
+        Same bounded fan-out as platform_documents/platform_reviews: Firestore
+        has no single cross-tenant users collection to query, so this scans
+        tenants up to _MAX_TENANTS_SCANNED and users up to 500 per tenant —
+        the same caps already in force for documents and reviews.
+        """
+        out: list[tuple] = []
+        for t in g.repo.list_all_tenants(limit=_MAX_TENANTS_SCANNED):
+            for u in g.repo.list_users(t.tenant_id, limit=500):
+                out.append((u, t))
+        return out
+
+    def _firebase_auth_by_uid(uids: list[str]) -> dict:
+        """Batch-fetch real Firebase Auth state for a set of uids.
+
+        get_users() accepts up to 100 identifiers per call, so this chunks.
+        A uid that fails to resolve (deleted from Firebase Auth but still in
+        Firestore, or a transient error) is simply absent from the result —
+        the caller treats that as "pending" rather than guessing a status.
+        """
+        from firebase_admin import auth as fb_auth
+
+        out: dict = {}
+        for i in range(0, len(uids), 100):
+            batch = uids[i : i + 100]
+            if not batch:
+                continue
+            try:
+                result = fb_auth.get_users([fb_auth.UidIdentifier(u) for u in batch])
+                for u in result.users:
+                    out[u.uid] = u
+            except Exception:
+                logger.exception("failed to batch-fetch Firebase Auth users")
+        return out
+
+    def _user_status(fb_user) -> str:
+        if fb_user is None:
+            return "pending"
+        if fb_user.disabled:
+            return "disabled"
+        if not fb_user.email_verified:
+            return "pending"
+        return "active"
+
+    def _user_row(tenant_user, tenant, fb_user) -> PlatformUserRow:
+        last_sign_in = None
+        if fb_user is not None and fb_user.user_metadata and fb_user.user_metadata.last_sign_in_timestamp:
+            last_sign_in = datetime.fromtimestamp(
+                fb_user.user_metadata.last_sign_in_timestamp / 1000, tz=timezone.utc
+            ).isoformat()
+        return PlatformUserRow(
+            uid=tenant_user.uid,
+            email=tenant_user.email,
+            role=tenant_user.role,
+            job_title=tenant_user.job_title,
+            tenant_id=tenant_user.tenant_id,
+            tenant_name=tenant.name if tenant else tenant_user.tenant_id,
+            created_at=_iso(tenant_user.created_at),
+            email_verified=bool(fb_user.email_verified) if fb_user else False,
+            disabled=bool(fb_user.disabled) if fb_user else False,
+            last_sign_in=last_sign_in,
+            status=_user_status(fb_user),
+        )
+
+    def _find_user(g, uid: str):
+        """The TenantUser + Tenant for one uid, or (None, None) if unknown to
+        Firestore. Used by every write endpoint below so an operator can
+        never act on a uid that was never a ComplianceGuardian user, even if
+        it happens to exist in Firebase Auth."""
+        for tu, t in _all_tenant_users(g):
+            if tu.uid == uid:
+                return tu, t
+        return None, None
+
+    @router.get("/platform/users", response_model=PlatformUsersPage)
+    def platform_users(
+        limit: int = Query(default=25, ge=1, le=100),
+        offset: int = Query(default=0, ge=0),
+        q: str = Query(default="", max_length=200),
+        role: str = Query(default=""),
+        tenant_id: str = Query(default=""),
+        status_filter: str = Query(default="", alias="status"),
+        sort: str = Query(default="created_at"),
+        direction: str = Query(default="desc"),
+        auth: AuthContext = Depends(require_platform_admin),
+    ) -> PlatformUsersPage:
+        """Every user across every tenant, with real status from Firebase Auth.
+
+        Filtered, sorted and paginated in memory after the bounded fan-out —
+        the same shape platform_documents and platform_reviews already use.
+        There is no true database-level cross-tenant pagination available to
+        this schema, so this is what "server-side" means for this product
+        today: the client never receives more than one page of rows.
+        """
+        g = gw()
+        _audit_platform_access(g, auth, "platform.users_viewed", {"limit": limit, "offset": offset})
+
+        pairs = _all_tenant_users(g)
+        fb_by_uid = _firebase_auth_by_uid([tu.uid for tu, _ in pairs])
+        rows = [_user_row(tu, t, fb_by_uid.get(tu.uid)) for tu, t in pairs]
+
+        needle = q.strip().lower()
+        if needle:
+            rows = [
+                r
+                for r in rows
+                if needle in r.email.lower()
+                or needle in r.job_title.lower()
+                or needle in r.tenant_name.lower()
+            ]
+        if role:
+            rows = [r for r in rows if r.role == role]
+        if tenant_id:
+            rows = [r for r in rows if r.tenant_id == tenant_id]
+        if status_filter:
+            rows = [r for r in rows if r.status == status_filter]
+
+        sort_key = sort if sort in {"email", "created_at", "last_sign_in", "status", "role", "tenant_name"} else "created_at"
+        rows.sort(key=lambda r: getattr(r, sort_key) or "", reverse=(direction != "asc"))
+
+        total = len(rows)
+        page = rows[offset : offset + limit]
+        return PlatformUsersPage(total=total, limit=limit, offset=offset, users=page)
+
+    @router.get("/platform/users/{uid}", response_model=PlatformUserDetail)
+    def platform_user_detail(
+        uid: str = Path(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$"),
+        auth: AuthContext = Depends(require_platform_admin),
+    ) -> PlatformUserDetail:
+        """One user's full record: identity, real auth state, and derived
+        usage — never fabricated where the schema has no field for it."""
+        from google.cloud import bigquery
+
+        from gcp_clients import audit_dataset, audit_table, project_id
+
+        g = gw()
+        _audit_platform_access(g, auth, "platform.user_viewed", {"uid": uid})
+
+        tenant_user, tenant = _find_user(g, uid)
+        if tenant_user is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+
+        fb_by_uid = _firebase_auth_by_uid([uid])
+        row = _user_row(tenant_user, tenant, fb_by_uid.get(uid))
+
+        checks = g.repo.list_checks(tenant_user.tenant_id, limit=_MAX_DOCS_SCANNED)
+        reviews_assigned = sum(1 for c in checks if getattr(c, "assigned_to", None) == uid)
+        reviews_decided = sum(1 for c in checks if getattr(c, "reviewer_id", None) == uid)
+
+        table = f"{project_id()}.{audit_dataset()}.{audit_table()}"
+        query = (
+            f"SELECT created_at, tenant_id, actor, action FROM `{table}` "  # noqa: S608
+            f"WHERE actor = @uid ORDER BY created_at DESC LIMIT 20"
+        )
+        job = g.bq.query(
+            query,
+            job_config=bigquery.QueryJobConfig(
+                query_parameters=[bigquery.ScalarQueryParameter("uid", "STRING", uid)]
+            ),
+        )
+        recent_activity = [
+            PlatformSecurityEvent(
+                created_at=_iso(r["created_at"]),
+                tenant_id=str(r["tenant_id"]),
+                actor=str(r["actor"]),
+                action=str(r["action"]),
+                category="activity",
+            )
+            for r in job.result()
+        ]
+
+        return PlatformUserDetail(
+            **row.model_dump(),
+            reviews_assigned=reviews_assigned,
+            reviews_decided=reviews_decided,
+            recent_activity=recent_activity,
+        )
+
+    @router.put("/platform/users/{uid}/status", response_model=UserStatusResponse)
+    def change_user_status(
+        req: ChangeUserStatusRequest,
+        uid: str = Path(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$"),
+        auth: AuthContext = Depends(require_platform_admin),
+    ) -> UserStatusResponse:
+        """Disable or restore one user's ability to sign in.
+
+        Exactly as narrow as change_tenant_status: an access control, never a
+        records change. Nothing this person ever uploaded, reviewed or
+        commented on is touched — only whether they can sign in.
+
+        Disabling alone does not end a session already in progress (a cached
+        ID token keeps working until it expires, up to an hour), so this also
+        revokes refresh tokens to make the effect immediate — the same
+        promise the tenant-suspend confirmation dialog already makes.
+        """
+        from firebase_admin import auth as fb_auth
+
+        g = gw()
+        tenant_user, _ = _find_user(g, uid)
+        if tenant_user is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+
+        try:
+            current = fb_auth.get_user(uid)
+        except Exception as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from exc
+
+        if current.disabled == req.disabled:
+            return UserStatusResponse(uid=uid, disabled=current.disabled, changed=False)
+
+        fb_auth.update_user(uid, disabled=req.disabled)
+        if req.disabled:
+            fb_auth.revoke_refresh_tokens(uid)
+
+        g.auditor.log(
+            tenant_id="__platform__",
+            actor=f"operator:{auth.email or auth.uid}",
+            action="platform.user_disabled" if req.disabled else "platform.user_enabled",
+            dedup_key=f"{uid}:{req.disabled}:{datetime.now(timezone.utc).isoformat()}",
+            before_state={"disabled": current.disabled},
+            after_state={"disabled": req.disabled, "reason": req.reason, "target_uid": uid},
+        )
+        logger.warning(
+            "user %s %s by %s: %s",
+            uid,
+            "disabled" if req.disabled else "enabled",
+            auth.uid,
+            req.reason,
+        )
+        return UserStatusResponse(uid=uid, disabled=req.disabled, changed=True)
+
+    @router.put("/platform/users/{uid}/role", response_model=UserRoleResponse)
+    def change_user_role(
+        req: ChangeUserRoleRequest,
+        uid: str = Path(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$"),
+        auth: AuthContext = Depends(require_platform_admin),
+    ) -> UserRoleResponse:
+        """Change a user's role within their existing tenant.
+
+        Firestore is updated first since it is this product's source of truth
+        for display; Firebase custom claims are updated to match because
+        those, not Firestore, are what an ID token actually carries — the
+        same claims set once at signup in create_tenant_owner. A claims
+        change only takes effect on the user's NEXT token (next sign-in, or a
+        forced refresh), not their current session, which mirrors the
+        already-documented delay on tenant-status changes elsewhere in this
+        product. Never moves a user to a different tenant.
+        """
+        from firebase_admin import auth as fb_auth
+
+        g = gw()
+        tenant_user, _ = _find_user(g, uid)
+        if tenant_user is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+
+        before_role = tenant_user.role
+        if before_role == req.role:
+            return UserRoleResponse(uid=uid, role=before_role, changed=False)
+
+        tenant_user.role = req.role
+        g.repo.upsert_user(tenant_user)
+
+        try:
+            fb_auth.set_custom_user_claims(
+                uid, {"tenant_id": tenant_user.tenant_id, "role": req.role}
+            )
+        except Exception:
+            logger.exception(
+                "role updated in Firestore for %s but Firebase custom claims failed", uid
+            )
+
+        g.auditor.log(
+            tenant_id=tenant_user.tenant_id,
+            actor=f"operator:{auth.email or auth.uid}",
+            action="platform.user_role_changed",
+            dedup_key=f"{uid}:{req.role}:{datetime.now(timezone.utc).isoformat()}",
+            before_state={"role": before_role},
+            after_state={"role": req.role, "reason": req.reason},
+        )
+        logger.warning(
+            "user %s role changed %s -> %s by %s: %s",
+            uid,
+            before_role,
+            req.role,
+            auth.uid,
+            req.reason,
+        )
+        return UserRoleResponse(uid=uid, role=req.role, changed=True)
 
     @router.get("/platform/system", response_model=list[ServiceStatus])
     def platform_system(

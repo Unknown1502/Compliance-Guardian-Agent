@@ -18,6 +18,8 @@ import {
   type PlatformRuleset,
   type SupportTicketRow,
   type SupportPermissions,
+  type PlatformUsersPage,
+  type PlatformUserDetail,
   ApiError,
 } from "./api";
 import { useAuth } from "./auth";
@@ -960,6 +962,471 @@ export function SystemSection() {
         reachable from this service without additional IAM and the Cloud Monitoring API, so they
         report unknown rather than a guessed status.
       </p>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------- Users
+
+const USER_STATUS_LABEL: Record<string, string> = {
+  active: "Active",
+  disabled: "Disabled",
+  pending: "Pending verification",
+};
+
+function StatusPill({ status: s }: { status: string }) {
+  return (
+    <span
+      className={cn(
+        "text-2xs font-semibold uppercase tracking-wide",
+        s === "active" && "text-ok",
+        s === "disabled" && "text-crit",
+        s === "pending" && "text-warn",
+      )}
+    >
+      {USER_STATUS_LABEL[s] ?? s}
+    </span>
+  );
+}
+
+const USERS_PAGE_SIZE = 25;
+
+/**
+ * Cross-tenant user directory.
+ *
+ * Status and last-login are real Firebase Auth state, not Firestore fields —
+ * see PlatformUserRow in api.ts. Filtering/sorting/pagination happen
+ * server-side per request; there is no client-side slicing of a bulk fetch
+ * here, unlike some of the sections above that reuse a single overview call.
+ */
+export function UsersSection() {
+  const { getToken } = useAuth();
+  const [q, setQ] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState("");
+  const [role, setRole] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [sort, setSort] = useState("created_at");
+  const [direction, setDirection] = useState<"asc" | "desc">("desc");
+  const [offset, setOffset] = useState(0);
+
+  const [data, setData] = useState<PlatformUsersPage | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedQ(q), 300);
+    return () => clearTimeout(id);
+  }, [q]);
+
+  useEffect(() => {
+    setOffset(0);
+  }, [debouncedQ, role, statusFilter, sort, direction]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    api
+      .users(getToken, {
+        limit: USERS_PAGE_SIZE,
+        offset,
+        q: debouncedQ,
+        role,
+        status: statusFilter,
+        sort,
+        direction,
+      })
+      .then((d) => {
+        if (cancelled) return;
+        setData(d);
+        setError(null);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setError(e instanceof ApiError ? e.message : (e as Error).message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [getToken, offset, debouncedQ, role, statusFilter, sort, direction]);
+
+  const toggleSort = (key: string) => {
+    if (sort === key) {
+      setDirection((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSort(key);
+      setDirection("asc");
+    }
+  };
+
+  const field =
+    "rounded border border-line bg-panel px-2 py-1 text-sm text-fg focus:border-accent focus:outline-none";
+
+  const rows = data?.users ?? [];
+  const total = data?.total ?? 0;
+  const from = total === 0 ? 0 : offset + 1;
+  const to = Math.min(offset + USERS_PAGE_SIZE, total);
+  const filtered = Boolean(debouncedQ || role || statusFilter);
+
+  return (
+    <div>
+      <Head
+        title="Users"
+        sub={loading ? "Loading…" : `Showing ${from}–${to} of ${total} users`}
+        right={
+          <div className="flex flex-wrap items-center gap-2">
+            <select className={field} value={role} onChange={(e) => setRole(e.target.value)}>
+              <option value="">All roles</option>
+              <option value="owner">Owner</option>
+              <option value="admin">Admin</option>
+              <option value="reviewer">Reviewer</option>
+            </select>
+            <select
+              className={field}
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+            >
+              <option value="">All statuses</option>
+              <option value="active">Active</option>
+              <option value="pending">Pending verification</option>
+              <option value="disabled">Disabled</option>
+            </select>
+            <Filter value={q} onChange={setQ} placeholder="Search name, email, tenant…" />
+          </div>
+        }
+      />
+
+      {error && <ErrorNote error={error} />}
+
+      <Panel>
+        {loading && !data ? (
+          <Loading />
+        ) : rows.length === 0 ? (
+          <Empty>{filtered ? "No users match your current filters." : "No users found."}</Empty>
+        ) : (
+          <div className="max-h-[65vh] overflow-auto">
+            <table className="tbl">
+              <thead>
+                <tr>
+                  {(
+                    [
+                      ["email", "User"],
+                      ["tenant_name", "Tenant"],
+                      ["role", "Role"],
+                      ["status", "Status"],
+                      ["created_at", "Created"],
+                      ["last_sign_in", "Last login"],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <th
+                      key={key}
+                      onClick={() => toggleSort(key)}
+                      className={cn("cursor-pointer select-none", sort === key && "text-accent")}
+                    >
+                      {label}
+                      {sort === key && (direction === "asc" ? " ↑" : " ↓")}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((u) => (
+                  <tr key={u.uid}>
+                    <td>
+                      <Link to={`/users/${u.uid}`} className="text-accent hover:underline">
+                        {u.email}
+                      </Link>
+                      {u.job_title && <div className="text-2xs text-faint">{u.job_title}</div>}
+                    </td>
+                    <td>
+                      <Link
+                        to={`/tenants/${u.tenant_id}`}
+                        className="text-fg-dim hover:text-accent hover:underline"
+                      >
+                        {u.tenant_name}
+                      </Link>
+                    </td>
+                    <td className="text-fg-dim">{u.role}</td>
+                    <td>
+                      <StatusPill status={u.status} />
+                    </td>
+                    <td className="text-faint">{ago(u.created_at)}</td>
+                    <td className="text-faint">
+                      {u.last_sign_in ? ago(u.last_sign_in) : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Panel>
+
+      {total > USERS_PAGE_SIZE && (
+        <div className="mt-3 flex items-center justify-between text-sm text-fg-dim">
+          <span>
+            Showing {from}–{to} of {total} users
+          </span>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setOffset((o) => Math.max(0, o - USERS_PAGE_SIZE))}
+              disabled={offset === 0}
+              className="rounded border border-line px-2.5 py-1 text-sm disabled:opacity-40"
+            >
+              Previous
+            </button>
+            <button
+              onClick={() => setOffset((o) => o + USERS_PAGE_SIZE)}
+              disabled={to >= total}
+              className="rounded border border-line px-2.5 py-1 text-sm disabled:opacity-40"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function UserDetailSection() {
+  const { uid } = useParams<{ uid: string }>();
+  const { getToken } = useAuth();
+  const [data, setData] = useState<PlatformUserDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    if (!uid) return;
+    setLoading(true);
+    api
+      .userDetail(getToken, uid)
+      .then((d) => {
+        setData(d);
+        setError(null);
+      })
+      .catch((e) => setError(e instanceof ApiError ? e.message : (e as Error).message))
+      .finally(() => setLoading(false));
+    // getToken is a stable module-level reference in every call site here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uid]);
+
+  useEffect(load, [load]);
+
+  const [statusTarget, setStatusTarget] = useState<"disable" | "enable" | null>(null);
+  const [roleTarget, setRoleTarget] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const applyStatus = async (reason: string) => {
+    if (!uid || !statusTarget) return;
+    setBusy(true);
+    setActionError(null);
+    try {
+      await api.setUserStatus(getToken, uid, statusTarget === "disable", reason);
+      setStatusTarget(null);
+      load();
+    } catch (e) {
+      setActionError(e instanceof ApiError ? e.message : (e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const applyRole = async (reason: string) => {
+    if (!uid || !roleTarget) return;
+    setBusy(true);
+    setActionError(null);
+    try {
+      await api.setUserRole(getToken, uid, roleTarget, reason);
+      setRoleTarget(null);
+      load();
+    } catch (e) {
+      setActionError(e instanceof ApiError ? e.message : (e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (loading && !data) return <Loading />;
+  if (error) return <ErrorNote error={error} />;
+  if (!data) return null;
+
+  return (
+    <div>
+      <Head
+        title={data.email}
+        sub={`${data.tenant_name} · ${data.role}`}
+        right={
+          <Link to="/users" className="text-sm text-accent hover:underline">
+            ← All users
+          </Link>
+        }
+      />
+
+      <div className="grid grid-cols-2 overflow-hidden rounded-xl border border-line bg-panel shadow-soft md:grid-cols-4">
+        <div className="px-3 py-2.5">
+          <div className="label">Status</div>
+          <div className="mt-1">
+            <StatusPill status={data.status} />
+          </div>
+        </div>
+        <Metric label="Reviews assigned" value={data.reviews_assigned} />
+        <Metric label="Reviews decided" value={data.reviews_decided} />
+        <div className="px-3 py-2.5">
+          <div className="label">Last login</div>
+          <div className="mt-1 text-sm text-fg-dim">
+            {data.last_sign_in ? ago(data.last_sign_in) : "Never"}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-3 grid gap-3 lg:grid-cols-2">
+        <Panel title="Account">
+          <div className="space-y-1.5 px-3 py-3 text-sm">
+            <div>
+              <span className="text-muted">Email </span>
+              <span className="text-fg">{data.email}</span>
+              {!data.email_verified && (
+                <span className="ml-1.5 text-2xs text-warn">unverified</span>
+              )}
+            </div>
+            <div>
+              <span className="text-muted">UID </span>
+              <Mono dim>{data.uid}</Mono>
+            </div>
+            <div>
+              <span className="text-muted">Tenant </span>
+              <Link to={`/tenants/${data.tenant_id}`} className="text-accent hover:underline">
+                {data.tenant_name}
+              </Link>
+            </div>
+            <div>
+              <span className="text-muted">Job title </span>
+              <span className="text-fg-dim">{data.job_title || "—"}</span>
+            </div>
+            <div>
+              <span className="text-muted">Created </span>
+              <span className="text-fg-dim">{ago(data.created_at)}</span>
+            </div>
+          </div>
+        </Panel>
+
+        <Panel title="Actions">
+          <div className="space-y-3 px-3 py-3 text-sm">
+            <div>
+              <div className="mb-1 text-fg-dim">Account access</div>
+              <button
+                onClick={() => setStatusTarget(data.disabled ? "enable" : "disable")}
+                className={cn(
+                  "rounded-lg px-3 py-1.5 text-sm font-medium text-white shadow-soft transition-colors",
+                  data.disabled ? "bg-ok hover:opacity-90" : "bg-crit hover:opacity-90",
+                )}
+              >
+                {data.disabled ? "Enable user" : "Disable user"}
+              </button>
+            </div>
+            <div>
+              <div className="mb-1 text-fg-dim">Role</div>
+              <select
+                className="rounded border border-line bg-panel px-2 py-1 text-sm text-fg focus:border-accent focus:outline-none"
+                value={data.role}
+                onChange={(e) => setRoleTarget(e.target.value)}
+              >
+                <option value="owner">Owner</option>
+                <option value="admin">Admin</option>
+                <option value="reviewer">Reviewer</option>
+              </select>
+            </div>
+          </div>
+        </Panel>
+      </div>
+
+      <Panel className="mt-3" title={`Recent activity (${data.recent_activity.length})`}>
+        {data.recent_activity.length === 0 ? (
+          <Empty>No recorded activity for this user.</Empty>
+        ) : (
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Action</th>
+                <th>Tenant</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.recent_activity.map((e, i) => (
+                <tr key={`${e.created_at}-${i}`}>
+                  <td className="text-faint">{e.created_at}</td>
+                  <td>
+                    <Mono>{e.action}</Mono>
+                  </td>
+                  <td>
+                    <Mono dim>{e.tenant_id}</Mono>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Panel>
+
+      <ConfirmAction
+        open={statusTarget !== null}
+        intent={statusTarget === "disable" ? "crit" : "ok"}
+        title={statusTarget === "disable" ? `Disable ${data.email}` : `Enable ${data.email}`}
+        confirmLabel={statusTarget === "disable" ? "Disable user" : "Enable user"}
+        busy={busy}
+        error={actionError}
+        onCancel={() => setStatusTarget(null)}
+        onConfirm={applyStatus}
+        reasonLabel={
+          statusTarget === "disable"
+            ? "Why is this user being disabled?"
+            : "Why is access being restored?"
+        }
+        reasonPlaceholder={
+          statusTarget === "disable"
+            ? "Reported suspicious activity on this account."
+            : "Confirmed with the customer, safe to restore."
+        }
+        consequence={
+          statusTarget === "disable" ? (
+            <>This user will be signed out immediately and cannot sign back in until re-enabled.</>
+          ) : (
+            <>This user can sign in again immediately.</>
+          )
+        }
+        preserved={
+          statusTarget === "disable" ? (
+            <>
+              <strong className="text-fg">Nothing is deleted.</strong> Every document, check and
+              comment this person is attached to is untouched.
+            </>
+          ) : undefined
+        }
+      />
+
+      <ConfirmAction
+        open={roleTarget !== null}
+        intent="crit"
+        title={`Change role to ${roleTarget ?? ""}`}
+        confirmLabel="Change role"
+        busy={busy}
+        error={actionError}
+        onCancel={() => setRoleTarget(null)}
+        onConfirm={applyRole}
+        reasonLabel="Why is this role changing?"
+        reasonPlaceholder="Promoted to admin to manage the team's document review queue."
+        consequence={
+          <>
+            This changes what {data.email} can do inside {data.tenant_name}. The new role takes
+            effect on their next sign-in or token refresh, not their current session.
+          </>
+        }
+      />
     </div>
   );
 }
