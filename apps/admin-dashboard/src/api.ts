@@ -244,6 +244,13 @@ export interface DocumentReprocessResult {
   task_type: string;
 }
 
+export interface ReportRegenerateResult {
+  report_id: string;
+  tenant_id: string;
+  task_id: string;
+  previous_status: string;
+}
+
 export interface UsersQuery {
   limit?: number;
   offset?: number;
@@ -391,6 +398,12 @@ export const api = {
     post<DocumentReprocessResult>(
       t,
       `/api/platform/documents/${encodeURIComponent(documentId)}/reanalyze?tenant_id=${encodeURIComponent(tenantId)}`,
+      {},
+    ),
+  regenerateReport: (t: TokenFn, reportId: string, tenantId: string) =>
+    post<ReportRegenerateResult>(
+      t,
+      `/api/platform/reports/${encodeURIComponent(reportId)}/regenerate?tenant_id=${encodeURIComponent(tenantId)}`,
       {},
     ),
 };

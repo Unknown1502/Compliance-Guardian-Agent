@@ -415,6 +415,76 @@ export function TenantsSection() {
   );
 }
 
+/**
+ * Force a real re-render of one report by id.
+ *
+ * There is no report list in this console yet — an operator reaches this
+ * with a report_id already in hand (from a customer's Reports page, or a
+ * downloaded file's own footer) rather than browsing to find one, so a
+ * plain input is the right shape here, not a table.
+ */
+function RegenerateReportCard({ tenantId }: { tenantId: string }) {
+  const { getToken } = useAuth();
+  const [reportId, setReportId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const run = async () => {
+    if (!reportId.trim()) return;
+    if (
+      !window.confirm(
+        `Regenerate report ${reportId.trim()}? This re-runs generation and overwrites the stored file.`,
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setResult(null);
+    setError(null);
+    try {
+      const res = await api.regenerateReport(getToken, reportId.trim(), tenantId);
+      setResult(`Queued (was ${res.previous_status}) — task ${res.task_id}.`);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : (e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const field =
+    "rounded border border-line bg-panel px-2 py-1 text-sm text-fg focus:border-accent focus:outline-none";
+
+  return (
+    <Panel className="mt-3" title="Regenerate a report">
+      <div className="flex flex-wrap items-center gap-2 px-3 py-3">
+        <input
+          className={cn(field, "w-72 max-w-full font-mono-num")}
+          placeholder="report_id"
+          value={reportId}
+          onChange={(e) => setReportId(e.target.value)}
+        />
+        <button
+          onClick={run}
+          disabled={busy || !reportId.trim()}
+          className="rounded-lg border border-line px-3 py-1.5 text-sm text-fg-dim transition-colors hover:bg-raised disabled:opacity-50"
+        >
+          {busy ? "Regenerating…" : "Regenerate"}
+        </button>
+      </div>
+      {(result || error) && (
+        <p className={cn("px-3 pb-3 text-2xs", error ? "text-crit" : "text-faint")}>
+          {error ?? result}
+        </p>
+      )}
+      <p className="border-t border-line px-3 py-2 text-2xs text-faint">
+        Resets the record to queued and re-dispatches — a report already READY is normally left
+        untouched, which is what this deliberately bypasses.
+      </p>
+    </Panel>
+  );
+}
+
 export function TenantDetailSection() {
   const { tenantId } = useParams<{ tenantId: string }>();
   const { data, error, loading } = useData<Overview>(api.overview);
@@ -459,6 +529,8 @@ export function TenantDetailSection() {
       <Panel className="mt-3" title={`Open escalations (${tReviews.length})`}>
         {reviews.loading ? <Loading /> : <ReviewTable rows={tReviews} hideTenant />}
       </Panel>
+
+      {tenantId && <RegenerateReportCard tenantId={tenantId} />}
     </div>
   );
 }

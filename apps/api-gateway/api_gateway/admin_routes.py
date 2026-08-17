@@ -52,7 +52,7 @@ from api_gateway.composition import RULESETS_ROOT
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from gcp_clients.firestore_repo import NotFoundError, TenantMismatchError
 from pydantic import BaseModel, Field
-from schema_validators import RulesetNotFoundError, TaskType, load_ruleset
+from schema_validators import ReportStatus, RulesetNotFoundError, TaskType, load_ruleset
 
 logger = logging.getLogger("cg.gateway.admin")
 
@@ -319,6 +319,13 @@ class DocumentReprocessResponse(BaseModel):
     tenant_id: str
     task_id: str
     task_type: str
+
+
+class ReportRegenerateResponse(BaseModel):
+    report_id: str
+    tenant_id: str
+    task_id: str
+    previous_status: str
 
 
 class PlatformRule(BaseModel):
@@ -1524,6 +1531,63 @@ def build_admin_router(gw) -> APIRouter:
         )
         return DocumentReprocessResponse(
             document_id=document_id, tenant_id=tenant_id, task_id=task.task_id, task_type="check"
+        )
+
+    @router.post(
+        "/platform/reports/{report_id}/regenerate",
+        response_model=ReportRegenerateResponse,
+    )
+    def platform_regenerate_report(
+        report_id: str = Path(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$"),
+        tenant_id: str = Query(min_length=1, max_length=128),
+        auth: AuthContext = Depends(require_platform_admin),
+    ) -> ReportRegenerateResponse:
+        """Force a real re-render of an existing report, e.g. one generated
+        before a customer-facing fix (report copy, model-name scrubbing)
+        shipped and now needs its stored artifact refreshed.
+
+        report_id is deterministic (tenant_id + period), so the workflow
+        this dispatches to is the exact one a tenant's own /api/reports call
+        would use — no separate admin-only generation path to drift from it.
+        The one thing an ordinary re-run of that same id would NOT do is
+        touch a report already READY (that guard is what makes Cloud Tasks
+        redelivery and a page refresh both free no-ops); resetting the
+        record to QUEUED first is what turns this specifically into a real
+        regenerate rather than another no-op.
+        """
+        g = gw()
+        try:
+            record = g.repo.get_report_record(report_id, tenant_id)
+        except Exception as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from exc
+
+        previous_status = record.status.value if hasattr(record.status, "value") else str(record.status)
+        g.repo.update_report_record(report_id, tenant_id, {"status": ReportStatus.QUEUED, "error": ""})
+
+        try:
+            svc = g.task_service()
+            task = svc.create_and_dispatch(
+                task_type=TaskType.REPORT, target_ref=report_id, tenant_id=tenant_id
+            )
+        except Exception as exc:
+            logger.exception(
+                "platform regenerate-report dispatch failed for %s/%s", tenant_id, report_id
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="reporting pipeline temporarily unavailable",
+            ) from exc
+
+        g.auditor.log(
+            tenant_id=tenant_id,
+            actor=f"platform_admin:{auth.email or auth.uid}",
+            action="platform.report_regenerated",
+            dedup_key=f"{tenant_id}:{report_id}:{task.task_id}",
+            before_state={"status": previous_status},
+            after_state={"status": "queued", "task_id": task.task_id},
+        )
+        return ReportRegenerateResponse(
+            report_id=report_id, tenant_id=tenant_id, task_id=task.task_id, previous_status=previous_status
         )
 
     @router.get("/platform/system", response_model=list[ServiceStatus])
